@@ -41,7 +41,7 @@ compose.desktop {
             packageName = "adbGUI"
             packageVersion = "1.0.0"
             description = "ADB device manager for Android developers"
-            copyright = "© 2024 adbGUI"
+            copyright = "© 2026 adbGUI"
             vendor = "adbGUI"
 
             macOS {
