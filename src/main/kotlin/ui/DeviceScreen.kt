@@ -371,6 +371,50 @@ private fun ForwardSection(
     }
 }
 
+private data class DisplayPreset(val name: String, val width: Int, val height: Int, val dpi: Int) {
+    val size get() = "${width}x$height"
+}
+
+// Ordered by physical diagonal, smallest to biggest device per class.
+private val PhonePresets = listOf(
+    DisplayPreset("Legacy 4.0\"", 480, 854, 240),
+    DisplayPreset("Compact HD 4.6\"", 720, 1280, 320),
+    DisplayPreset("FHD 5.2\"", 1080, 1920, 420),
+    DisplayPreset("Pixel 3", 1080, 2280, 440),
+    DisplayPreset("Galaxy S23", 1080, 2340, 425),
+    DisplayPreset("Budget HD+ 6.3\"", 720, 1600, 280),
+    DisplayPreset("Pixel 8", 1080, 2400, 420),
+    DisplayPreset("Pixel 7 Pro", 1440, 3120, 512),
+    DisplayPreset("Pixel 9 Pro XL", 1344, 2992, 480),
+    DisplayPreset("S20 Ultra", 1440, 3200, 511),
+)
+
+private val TabletPresets = listOf(
+    DisplayPreset("Fold inner 7.6\"", 1812, 2176, 420),
+    DisplayPreset("Nexus 7", 1200, 1920, 320),
+    DisplayPreset("Tab 7\" WXGA", 800, 1280, 213),
+    DisplayPreset("Nexus 9", 1536, 2048, 320),
+    DisplayPreset("Tab S9 11\"", 1600, 2560, 320),
+    DisplayPreset("Tab S9+ 12.4\"", 1752, 2800, 340),
+    DisplayPreset("Lenovo P11", 1200, 2000, 240),
+    DisplayPreset("Pixel C", 1800, 2560, 308),
+    DisplayPreset("Pixel Tablet", 1600, 2560, 276),
+    DisplayPreset("Tab S9 Ultra", 1848, 2960, 320),
+)
+
+/** Smallest-width dp from `wm size` / `wm density` output; tablet when >= 600dp. */
+private fun isTabletDisplay(display: Pair<String, String>): Boolean? {
+    val (sizeOut, densityOut) = display
+    val match = Regex("""(\d+)x(\d+)""").find(sizeOut) ?: return null
+    val (w, h) = match.destructured
+    val dpi = Regex("""Physical density:\s*(\d+)""").find(densityOut)?.groupValues?.get(1)?.toIntOrNull()
+        ?: Regex("""(\d+)""").find(densityOut)?.value?.toIntOrNull()
+        ?: return null
+    val swDp = minOf(w.toInt(), h.toInt()) * 160 / dpi
+    return swDp >= 600
+}
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun DisplaySection(
     device: AdbDevice,
@@ -403,6 +447,38 @@ private fun DisplaySection(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+        display?.let { isTabletDisplay(it) }?.let { isTablet ->
+            val presets = if (isTablet) TabletPresets else PhonePresets
+            Text(
+                if (isTablet) "Tablet presets (smallest → biggest)" else "Phone presets (smallest → biggest)",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                presets.forEach { preset ->
+                    AssistChip(
+                        enabled = !isBusy,
+                        onClick = {
+                            run("${preset.name}: ${preset.size} @ ${preset.dpi}dpi") {
+                                val sizeResult = AdbService.setDisplaySize(device.serial, preset.size)
+                                if (sizeResult.isFailure) sizeResult
+                                else AdbService.setDensity(device.serial, preset.dpi.toString())
+                            }
+                        },
+                        label = {
+                            Text(
+                                "${preset.name} · ${preset.size} · ${preset.dpi}dpi",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    )
+                }
+            }
         }
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
