@@ -24,6 +24,8 @@ fun DeviceScreen(device: AdbDevice) {
     val scope = rememberCoroutineScope()
     var info by remember { mutableStateOf<DeviceInfo?>(null) }
     var forwards by remember { mutableStateOf<List<PortForward>>(emptyList()) }
+    var display by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var props by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var isLoading by remember { mutableStateOf(false) }
     var feedback by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
     var rebootTarget by remember { mutableStateOf<Pair<String, String?>?>(null) }
@@ -33,6 +35,8 @@ fun DeviceScreen(device: AdbDevice) {
             isLoading = true
             info = runCatching { AdbService.deviceInfo(device.serial) }.getOrNull()
             forwards = runCatching { AdbService.listForwards(device.serial) }.getOrDefault(emptyList())
+            display = runCatching { AdbService.displayState(device.serial) }.getOrNull()
+            props = runCatching { AdbService.getProps(device.serial) }.getOrDefault(emptyMap())
             isLoading = false
         }
     }
@@ -84,12 +88,13 @@ fun DeviceScreen(device: AdbDevice) {
             }
         }
 
-        feedback?.let { (success, msg) ->
+        AnimatedFade(feedback) { (success, msg) ->
             Card(
                 colors = CardDefaults.cardColors(
                     containerColor = if (success) MaterialTheme.colorScheme.secondaryContainer
                     else MaterialTheme.colorScheme.errorContainer
                 ),
+                border = appCardBorder(),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
@@ -146,6 +151,20 @@ fun DeviceScreen(device: AdbDevice) {
             onChanged = { refresh() },
             onFeedback = { feedback = it },
         )
+
+        DisplaySection(
+            device = device,
+            display = display,
+            onChanged = { refresh() },
+            onFeedback = { feedback = it },
+        )
+
+        DeeplinkSection(
+            device = device,
+            onFeedback = { feedback = it },
+        )
+
+        PropsSection(props = props)
 
         SectionCard("Reboot", Icons.Filled.RestartAlt) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -353,9 +372,188 @@ private fun ForwardSection(
 }
 
 @Composable
+private fun DisplaySection(
+    device: AdbDevice,
+    display: Pair<String, String>?,
+    onChanged: () -> Unit,
+    onFeedback: (Pair<Boolean, String>) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var size by remember { mutableStateOf("") }
+    var density by remember { mutableStateOf("") }
+    var isBusy by remember { mutableStateOf(false) }
+
+    fun run(label: String, block: suspend () -> Result<Unit>) {
+        scope.launch {
+            isBusy = true
+            val result = block()
+            isBusy = false
+            onFeedback(
+                if (result.isSuccess) true to label
+                else false to "Failed: ${result.exceptionOrNull()?.message}"
+            )
+            if (result.isSuccess) onChanged()
+        }
+    }
+
+    SectionCard("Display", Icons.Filled.AspectRatio) {
+        display?.let { (sizeState, densityState) ->
+            Text(
+                (sizeState.lines() + densityState.lines()).joinToString(" · ") { it.trim() },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            OutlinedTextField(
+                value = size,
+                onValueChange = { size = it },
+                label = { Text("Size (WxH)") },
+                placeholder = { Text("1080x2400") },
+                modifier = Modifier.width(180.dp),
+                singleLine = true,
+            )
+            Button(
+                enabled = !isBusy && size.matches(Regex("""\d+x\d+""")),
+                onClick = { run("Display size set to $size") { AdbService.setDisplaySize(device.serial, size.trim()) } }
+            ) { Text("Apply") }
+            OutlinedTextField(
+                value = density,
+                onValueChange = { density = it.filter(Char::isDigit) },
+                label = { Text("Density (dpi)") },
+                placeholder = { Text("440") },
+                modifier = Modifier.width(140.dp),
+                singleLine = true,
+            )
+            Button(
+                enabled = !isBusy && density.toIntOrNull() != null,
+                onClick = { run("Density set to $density dpi") { AdbService.setDensity(device.serial, density.trim()) } }
+            ) { Text("Apply") }
+            OutlinedButton(
+                enabled = !isBusy,
+                onClick = {
+                    run("Display reset") {
+                        AdbService.setDisplaySize(device.serial, null)
+                        AdbService.setDensity(device.serial, null)
+                    }
+                }
+            ) { Text("Reset") }
+            if (isBusy) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+        }
+    }
+}
+
+@Composable
+private fun DeeplinkSection(
+    device: AdbDevice,
+    onFeedback: (Pair<Boolean, String>) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var url by remember { mutableStateOf("") }
+    var isBusy by remember { mutableStateOf(false) }
+
+    SectionCard("Deeplink / URL", Icons.Filled.Link) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            OutlinedTextField(
+                value = url,
+                onValueChange = { url = it },
+                label = { Text("URL or deeplink") },
+                placeholder = { Text("https://example.com or myapp://path") },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+            )
+            Button(
+                enabled = !isBusy && url.isNotBlank(),
+                onClick = {
+                    scope.launch {
+                        isBusy = true
+                        val result = AdbService.openUrl(device.serial, url.trim())
+                        isBusy = false
+                        onFeedback(
+                            if (result.isSuccess) true to "Opened: ${url.trim()}"
+                            else false to "Failed: ${result.exceptionOrNull()?.message}"
+                        )
+                    }
+                }
+            ) {
+                Icon(Icons.Filled.OpenInNew, null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Open")
+            }
+            if (isBusy) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+        }
+    }
+}
+
+private const val MAX_PROP_RESULTS = 30
+
+@Composable
+private fun PropsSection(props: Map<String, String>) {
+    var search by remember { mutableStateOf("") }
+
+    SectionCard("System Properties", Icons.Filled.Tune) {
+        OutlinedTextField(
+            value = search,
+            onValueChange = { search = it },
+            placeholder = { Text("Search ${props.size} properties…") },
+            leadingIcon = { Icon(Icons.Filled.Search, null, modifier = Modifier.size(18.dp)) },
+            trailingIcon = if (search.isNotEmpty()) {
+                { IconButton(onClick = { search = "" }, modifier = Modifier.size(18.dp)) {
+                    Icon(Icons.Filled.Clear, "Clear", modifier = Modifier.size(14.dp))
+                }}
+            } else null,
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+        )
+        if (search.isNotBlank()) {
+            val matches = props.entries
+                .filter { it.key.contains(search, ignoreCase = true) || it.value.contains(search, ignoreCase = true) }
+            matches.take(MAX_PROP_RESULTS).forEach { (key, value) ->
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        key,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(0.5f)
+                    )
+                    Text(
+                        value.ifEmpty { "–" },
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(0.5f)
+                    )
+                }
+            }
+            if (matches.size > MAX_PROP_RESULTS) {
+                Text(
+                    "… ${matches.size - MAX_PROP_RESULTS} more — refine search",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (matches.isEmpty()) {
+                Text(
+                    "No matches",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun SectionCard(title: String, icon: ImageVector, content: @Composable ColumnScope.() -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        border = appCardBorder(),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(

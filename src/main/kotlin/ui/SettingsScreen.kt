@@ -8,7 +8,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import settings.AppSettings
 
@@ -26,6 +25,7 @@ fun SettingsScreen() {
 
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                border = appCardBorder(),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
@@ -44,7 +44,7 @@ fun SettingsScreen() {
                         placeholder = { Text("/opt/homebrew/bin/adb") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = AppMonoFamily),
                         supportingText = { Text("Empty = auto-detect on next launch") },
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = MaterialTheme.colorScheme.primary,
@@ -84,7 +84,7 @@ fun SettingsScreen() {
                                 Icon(
                                     Icons.Filled.CheckCircle,
                                     null,
-                                    modifier = Modifier.size(14.dp),
+                                    modifier = Modifier.size(16.dp),
                                     tint = MaterialTheme.colorScheme.secondary
                                 )
                                 Text("Saved", color = MaterialTheme.colorScheme.secondary, style = MaterialTheme.typography.bodySmall)
@@ -96,6 +96,7 @@ fun SettingsScreen() {
 
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                border = appCardBorder(),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
@@ -106,12 +107,12 @@ fun SettingsScreen() {
                     Icon(
                         Icons.Filled.Info,
                         null,
-                        modifier = Modifier.size(14.dp),
+                        modifier = Modifier.size(16.dp),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
                         "Active: ${AdbService.adbPath}",
-                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = AppMonoFamily),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }

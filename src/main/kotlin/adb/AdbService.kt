@@ -36,6 +36,19 @@ data class DeviceInfo(
 
 data class PortForward(val serial: String, val local: String, val remote: String)
 
+data class AppInfo(
+    val packageName: String,
+    val versionName: String,
+    val versionCode: String,
+    val minSdk: String,
+    val targetSdk: String,
+    val firstInstall: String,
+    val lastUpdate: String,
+    val installer: String,
+    val apkPath: String,
+    val dataDir: String,
+)
+
 data class AdbDevice(val serial: String, val state: String, val model: String? = null) {
     val isOnline get() = state == "device"
     val displayName get() = if (model != null) "$model ($serial)" else serial
@@ -329,7 +342,254 @@ object AdbService {
         }
     }
 
+    // --- Install / Push ---
+
+    suspend fun install(serial: String, apkPath: String): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val output = runCommand(listOf(adbPath, "-s", serial, "install", "-r", apkPath))
+            if (output.contains("Success", ignoreCase = true)) Result.success("Installed: ${java.io.File(apkPath).name}")
+            else Result.failure(Exception(output.trim().ifEmpty { "Unknown error" }))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun push(serial: String, localPath: String, remotePath: String): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val output = runCommand(listOf(adbPath, "-s", serial, "push", localPath, remotePath))
+            if (output.contains("pushed", ignoreCase = true)) Result.success(remotePath)
+            else Result.failure(Exception(output.trim().ifEmpty { "Unknown error" }))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    // --- App actions ---
+
+    suspend fun forceStop(serial: String, packageName: String): Unit = withContext(Dispatchers.IO) {
+        runCommand(listOf(adbPath, "-s", serial, "shell", "am", "force-stop", packageName))
+        Unit
+    }
+
+    suspend fun clearData(serial: String, packageName: String): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val output = runCommand(listOf(adbPath, "-s", serial, "shell", "pm", "clear", packageName))
+            if (output.contains("Success", ignoreCase = true)) Result.success(Unit)
+            else Result.failure(Exception(output.trim().ifEmpty { "Unknown error" }))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun launchApp(serial: String, packageName: String): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val output = runCommand(listOf(
+                adbPath, "-s", serial, "shell", "monkey",
+                "-p", packageName, "-c", "android.intent.category.LAUNCHER", "1",
+            ))
+            if (output.contains("Events injected", ignoreCase = true)) Result.success(Unit)
+            else Result.failure(Exception("No launchable activity found"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun appInfo(serial: String, packageName: String): AppInfo = withContext(Dispatchers.IO) {
+        val dump = runCommand(listOf(adbPath, "-s", serial, "shell", "dumpsys", "package", packageName))
+        fun find(key: String): String? = dump.lines()
+            .firstOrNull { it.trim().startsWith("$key=") }
+            ?.substringAfter("$key=")
+            ?.trim()
+        val sdkLine = dump.lines().firstOrNull { it.contains("targetSdk=") }
+        AppInfo(
+            packageName = packageName,
+            versionName = find("versionName") ?: "–",
+            versionCode = find("versionCode")?.substringBefore(' ') ?: "–",
+            minSdk = sdkLine?.substringAfter("minSdk=")?.substringBefore(' ')?.trim() ?: "–",
+            targetSdk = sdkLine?.substringAfter("targetSdk=")?.substringBefore(' ')?.trim() ?: "–",
+            firstInstall = find("firstInstallTime") ?: "–",
+            lastUpdate = find("lastUpdateTime") ?: "–",
+            installer = find("installerPackageName")?.takeIf { it != "null" } ?: "–",
+            apkPath = find("codePath") ?: "–",
+            dataDir = find("dataDir") ?: "–",
+        )
+    }
+
+    // --- Screenshot / Screen recording ---
+
+    suspend fun screenshot(serial: String): Result<ByteArray> = withContext(Dispatchers.IO) {
+        try {
+            val bytes = runCommandBytes(listOf(adbPath, "-s", serial, "exec-out", "screencap", "-p"))
+            // PNG magic: 0x89 'P' 'N' 'G'
+            if (bytes.size > 8 && bytes[1] == 'P'.code.toByte() && bytes[2] == 'N'.code.toByte())
+                Result.success(bytes)
+            else Result.failure(Exception(bytes.toString(Charsets.UTF_8).trim().take(200).ifEmpty { "Empty screenshot" }))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private const val RECORD_REMOTE_PATH = "/sdcard/adbgui_recording.mp4"
+    private val recordProcesses = mutableMapOf<String, Process>()
+
+    fun isRecording(serial: String): Boolean = recordProcesses[serial]?.isAlive == true
+
+    suspend fun startRecording(serial: String): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            if (isRecording(serial)) return@withContext Result.failure(Exception("Already recording"))
+            val process = ProcessBuilder(listOf(adbPath, "-s", serial, "shell", "screenrecord", RECORD_REMOTE_PATH))
+                .redirectErrorStream(true)
+                .start()
+            recordProcesses[serial] = process
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun stopRecording(serial: String, localPath: String): Result<String> = withContext(Dispatchers.IO) {
+        val process = recordProcesses.remove(serial)
+            ?: return@withContext Result.failure(Exception("No recording running"))
+        try {
+            // SIGINT lets screenrecord finalize the MP4 before the shell dies
+            runCommand(listOf(adbPath, "-s", serial, "shell", "pkill", "-2", "screenrecord"))
+            process.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
+            process.destroyForcibly()
+            Thread.sleep(1000)
+            val output = runCommand(listOf(adbPath, "-s", serial, "pull", RECORD_REMOTE_PATH, localPath))
+            runCommand(listOf(adbPath, "-s", serial, "shell", "rm", "-f", RECORD_REMOTE_PATH))
+            if (output.contains("pulled", ignoreCase = true)) Result.success(localPath)
+            else Result.failure(Exception(output.trim().ifEmpty { "Pull failed" }))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    // --- Shell / Input ---
+
+    suspend fun shell(serial: String, command: String): String = withContext(Dispatchers.IO) {
+        runCommand(listOf(adbPath, "-s", serial, "shell", command))
+    }
+
+    suspend fun inputText(serial: String, text: String): Unit = withContext(Dispatchers.IO) {
+        runCommand(listOf(adbPath, "-s", serial, "shell", "input", "text", shellQuote(text.replace(" ", "%s"))))
+        Unit
+    }
+
+    suspend fun keyEvent(serial: String, keyCode: Int): Unit = withContext(Dispatchers.IO) {
+        runCommand(listOf(adbPath, "-s", serial, "shell", "input", "keyevent", keyCode.toString()))
+        Unit
+    }
+
+    suspend fun tap(serial: String, x: Int, y: Int): Unit = withContext(Dispatchers.IO) {
+        runCommand(listOf(adbPath, "-s", serial, "shell", "input", "tap", x.toString(), y.toString()))
+        Unit
+    }
+
+    suspend fun swipe(serial: String, x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int): Unit =
+        withContext(Dispatchers.IO) {
+            runCommand(listOf(
+                adbPath, "-s", serial, "shell", "input", "swipe",
+                x1.toString(), y1.toString(), x2.toString(), y2.toString(), durationMs.toString(),
+            ))
+            Unit
+        }
+
+    // --- Display ---
+
+    suspend fun displayState(serial: String): Pair<String, String> = withContext(Dispatchers.IO) {
+        val size = runCommand(listOf(adbPath, "-s", serial, "shell", "wm", "size")).trim()
+        val density = runCommand(listOf(adbPath, "-s", serial, "shell", "wm", "density")).trim()
+        size to density
+    }
+
+    suspend fun setDisplaySize(serial: String, size: String?): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val output = runCommand(listOf(adbPath, "-s", serial, "shell", "wm", "size", size ?: "reset"))
+            if (output.contains("Error", ignoreCase = true) || output.contains("Exception"))
+                Result.failure(Exception(output.trim().lines().first()))
+            else Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun setDensity(serial: String, dpi: String?): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val output = runCommand(listOf(adbPath, "-s", serial, "shell", "wm", "density", dpi ?: "reset"))
+            if (output.contains("Error", ignoreCase = true) || output.contains("Exception"))
+                Result.failure(Exception(output.trim().lines().first()))
+            else Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    // --- Deeplink ---
+
+    suspend fun openUrl(serial: String, url: String): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val output = runCommand(listOf(
+                adbPath, "-s", serial, "shell", "am", "start",
+                "-a", "android.intent.action.VIEW", "-d", shellQuote(url),
+            ))
+            if (output.contains("Error", ignoreCase = true) || output.contains("Exception"))
+                Result.failure(Exception(output.trim().lines().last()))
+            else Result.success(output.trim().lines().first())
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    // --- Properties ---
+
+    suspend fun getProps(serial: String): Map<String, String> = withContext(Dispatchers.IO) {
+        runCommand(listOf(adbPath, "-s", serial, "shell", "getprop"))
+            .lines()
+            .mapNotNull { line ->
+                val match = Regex("""\[(.+?)]: \[(.*)]""").find(line) ?: return@mapNotNull null
+                match.groupValues[1] to match.groupValues[2]
+            }
+            .toMap()
+    }
+
+    suspend fun batteryLevel(serial: String): Int? = withContext(Dispatchers.IO) {
+        runCommand(listOf(adbPath, "-s", serial, "shell", "dumpsys", "battery"))
+            .lines()
+            .firstOrNull { it.trim().startsWith("level:") }
+            ?.substringAfter("level:")
+            ?.trim()
+            ?.toIntOrNull()
+    }
+
+    // --- scrcpy ---
+
+    fun findScrcpy(): String? {
+        val candidates = listOf("scrcpy", "/opt/homebrew/bin/scrcpy", "/usr/local/bin/scrcpy")
+        return candidates.firstOrNull { path ->
+            try { Runtime.getRuntime().exec(arrayOf(path, "--version")).waitFor() == 0 }
+            catch (_: Exception) { false }
+        }
+    }
+
+    suspend fun launchScrcpy(serial: String): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val scrcpy = findScrcpy() ?: return@withContext Result.failure(Exception("scrcpy not found (brew install scrcpy)"))
+            ProcessBuilder(listOf(scrcpy, "-s", serial)).start()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     private fun shellQuote(path: String) = "'" + path.replace("'", "'\\''") + "'"
+
+    private fun runCommandBytes(args: List<String>): ByteArray {
+        val process = ProcessBuilder(args).start()
+        val bytes = process.inputStream.readBytes()
+        process.waitFor()
+        return bytes
+    }
 
     private fun runCommand(args: List<String>): String {
         val process = ProcessBuilder(args).redirectErrorStream(true).start()

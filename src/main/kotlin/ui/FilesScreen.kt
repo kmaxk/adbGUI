@@ -15,7 +15,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -78,6 +79,31 @@ fun FilesScreen(device: AdbDevice) {
                 onSuccess = { true to "Saved: $it" },
                 onFailure = { false to "Pull failed: ${it.message}" }
             )
+        }
+    }
+
+    fun upload() {
+        scope.launch {
+            val sources = withContext(Dispatchers.Swing) {
+                val dialog = FileDialog(null as Frame?, "Upload to $currentPath…", FileDialog.LOAD)
+                dialog.isMultipleMode = true
+                dialog.isVisible = true
+                dialog.files.toList()
+            }
+            if (sources.isEmpty()) return@launch
+            isBusy = true
+            var lastResult: Pair<Boolean, String>? = null
+            for (source in sources) {
+                val remote = if (currentPath == "/") "/${source.name}" else "$currentPath/${source.name}"
+                val result = AdbService.push(device.serial, source.absolutePath, remote)
+                lastResult = result.fold(
+                    onSuccess = { true to "Uploaded: $it" },
+                    onFailure = { false to "Push failed: ${it.message}" }
+                )
+            }
+            isBusy = false
+            feedback = lastResult
+            load()
         }
     }
 
@@ -147,7 +173,7 @@ fun FilesScreen(device: AdbDevice) {
                         onClick = { currentPath = "/"; feedback = null },
                         contentPadding = PaddingValues(horizontal = 6.dp)
                     ) {
-                        Text("/", fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("/", fontFamily = AppMonoFamily, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     val segments = currentPath.trim('/').split('/').filter { it.isNotEmpty() }
                     segments.forEachIndexed { index, segment ->
@@ -159,7 +185,7 @@ fun FilesScreen(device: AdbDevice) {
                         ) {
                             Text(
                                 segment,
-                                fontFamily = FontFamily.Monospace,
+                                fontFamily = AppMonoFamily,
                                 color = if (index == segments.lastIndex) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -170,6 +196,9 @@ fun FilesScreen(device: AdbDevice) {
                 if (isLoading || isBusy) {
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                 } else {
+                    IconButton(onClick = { upload() }, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Filled.Upload, "Upload to this folder", modifier = Modifier.size(18.dp))
+                    }
                     IconButton(onClick = { load() }, modifier = Modifier.size(32.dp)) {
                         Icon(Icons.Filled.Refresh, "Refresh", modifier = Modifier.size(18.dp))
                     }
@@ -179,7 +208,7 @@ fun FilesScreen(device: AdbDevice) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
 
         // Feedback banner
-        feedback?.let { (success, msg) ->
+        AnimatedFade(feedback) { (success, msg) ->
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -194,7 +223,7 @@ fun FilesScreen(device: AdbDevice) {
                 Icon(
                     if (success) Icons.Filled.CheckCircle else Icons.Filled.Error,
                     null,
-                    modifier = Modifier.size(14.dp),
+                    modifier = Modifier.size(16.dp),
                     tint = if (success) MaterialTheme.colorScheme.onSecondaryContainer
                     else MaterialTheme.colorScheme.onErrorContainer
                 )
@@ -206,7 +235,7 @@ fun FilesScreen(device: AdbDevice) {
                     modifier = Modifier.weight(1f)
                 )
                 IconButton(onClick = { feedback = null }, modifier = Modifier.size(20.dp)) {
-                    Icon(Icons.Filled.Close, "Dismiss", modifier = Modifier.size(12.dp))
+                    Icon(Icons.Filled.Close, "Dismiss", modifier = Modifier.size(14.dp))
                 }
             }
         }
@@ -224,11 +253,12 @@ fun FilesScreen(device: AdbDevice) {
                 CircularProgressIndicator()
             }
             files.isEmpty() -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Empty folder", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                EmptyState(icon = Icons.Filled.FolderOpen, title = "Empty folder")
             }
             else -> LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 4.dp)) {
                 items(files, key = { it.path }) { file ->
                     val isSelected = file == selectedFile
+                    val (hoverSource, hovered) = rememberHover()
                     Surface(
                         onClick = {
                             if (file.isDirectory) {
@@ -238,10 +268,16 @@ fun FilesScreen(device: AdbDevice) {
                                 selectedFile = if (isSelected) null else file
                             }
                         },
-                        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer
-                        else MaterialTheme.colorScheme.background,
+                        interactionSource = hoverSource,
+                        color = when {
+                            isSelected -> MaterialTheme.colorScheme.primaryContainer
+                            hovered.value -> HoverColor
+                            else -> MaterialTheme.colorScheme.background
+                        },
                         shape = MaterialTheme.shapes.small,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .pointerHoverIcon(PointerIcon.Hand)
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
@@ -279,21 +315,21 @@ fun FilesScreen(device: AdbDevice) {
                                     Text(
                                         formatSize(file.size),
                                         style = MaterialTheme.typography.labelSmall,
-                                        fontFamily = FontFamily.Monospace,
+                                        fontFamily = AppMonoFamily,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                                 Text(
                                     file.modified,
                                     style = MaterialTheme.typography.labelSmall,
-                                    fontFamily = FontFamily.Monospace,
+                                    fontFamily = AppMonoFamily,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                                 )
                                 if (file.isDirectory) {
                                     IconButton(onClick = { confirmDelete = file }, modifier = Modifier.size(26.dp)) {
                                         Icon(
                                             Icons.Filled.Delete, "Delete",
-                                            modifier = Modifier.size(14.dp),
+                                            modifier = Modifier.size(16.dp),
                                             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
                                         )
                                     }

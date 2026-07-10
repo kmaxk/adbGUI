@@ -2,8 +2,11 @@ package ui
 
 import adb.AdbDevice
 import adb.AdbService
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -37,7 +40,7 @@ fun App() {
 
     LaunchedEffect(Unit) { refreshDevices() }
 
-    MaterialTheme(colorScheme = AppDarkColorScheme) {
+    MaterialTheme(colorScheme = AppDarkColorScheme, shapes = AppShapes, typography = AppTypography) {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Row(modifier = Modifier.fillMaxSize()) {
                 AppNavigationRail(selectedTab = selectedTab, onTabSelect = { selectedTab = it })
@@ -50,7 +53,7 @@ fun App() {
                 )
 
                 Column(modifier = Modifier.weight(1f)) {
-                    if (selectedTab != 4) {
+                    if (selectedTab != 6) {
                         DeviceBar(
                             devices = devices,
                             selected = selectedDevice,
@@ -62,16 +65,20 @@ fun App() {
                     }
 
                     val device = selectedDevice
-                    when (selectedTab) {
-                        4 -> SettingsScreen()
-                        else -> if (device == null) {
-                            NoDevicePlaceholder()
-                        } else {
-                            when (selectedTab) {
-                                0 -> LogcatScreen(device)
-                                1 -> UninstallScreen(device)
-                                2 -> FilesScreen(device)
-                                3 -> DeviceScreen(device)
+                    Crossfade(targetState = selectedTab, animationSpec = tween(180)) { tab ->
+                        when (tab) {
+                            6 -> SettingsScreen()
+                            else -> if (device == null) {
+                                NoDevicePlaceholder()
+                            } else {
+                                when (tab) {
+                                    0 -> LogcatScreen(device)
+                                    1 -> AppsScreen(device)
+                                    2 -> FilesScreen(device)
+                                    3 -> CaptureScreen(device)
+                                    4 -> ShellScreen(device)
+                                    5 -> DeviceScreen(device)
+                                }
                             }
                         }
                     }
@@ -87,10 +94,12 @@ private data class NavItem(val label: String, val icon: ImageVector, val tab: In
 private fun AppNavigationRail(selectedTab: Int, onTabSelect: (Int) -> Unit) {
     val items = listOf(
         NavItem("Logcat", Icons.Filled.Article, 0),
-        NavItem("Uninstall", Icons.Filled.Delete, 1),
+        NavItem("Apps", Icons.Filled.Apps, 1),
         NavItem("Files", Icons.Filled.Folder, 2),
-        NavItem("Device", Icons.Filled.PhoneAndroid, 3),
-        NavItem("Settings", Icons.Filled.Settings, 4),
+        NavItem("Screen", Icons.Filled.Screenshot, 3),
+        NavItem("Shell", Icons.Filled.Terminal, 4),
+        NavItem("Device", Icons.Filled.PhoneAndroid, 5),
+        NavItem("Settings", Icons.Filled.Settings, 6),
     )
 
     NavigationRail(
@@ -130,27 +139,11 @@ private fun AppNavigationRail(selectedTab: Int, onTabSelect: (Int) -> Unit) {
 @Composable
 private fun NoDevicePlaceholder() {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Icon(
-                Icons.Filled.PhoneAndroid,
-                contentDescription = null,
-                modifier = Modifier.size(52.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                "No device connected",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                "Connect an Android device via USB or start an emulator",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-            )
-        }
+        EmptyState(
+            icon = Icons.Filled.PhoneAndroid,
+            title = "No device connected",
+            subtitle = "Connect an Android device via USB or start an emulator",
+        )
     }
 }
 
@@ -164,6 +157,12 @@ fun DeviceBar(
     onRefresh: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var batteryLevel by remember { mutableStateOf<Int?>(null) }
+
+    LaunchedEffect(selected?.serial) {
+        batteryLevel = null
+        selected?.let { batteryLevel = runCatching { AdbService.batteryLevel(it.serial) }.getOrNull() }
+    }
 
     Row(
         modifier = Modifier
@@ -172,11 +171,14 @@ fun DeviceBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Icon(
-            Icons.Filled.PhoneAndroid,
-            contentDescription = null,
-            modifier = Modifier.size(16.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .background(
+                    if (selected?.isOnline == true) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                    CircleShape,
+                )
         )
         ExposedDropdownMenuBox(
             expanded = expanded,
@@ -212,6 +214,32 @@ fun DeviceBar(
                         )
                     }
                 }
+            }
+        }
+        batteryLevel?.let { level ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier
+                    .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.small)
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Icon(
+                    when {
+                        level >= 80 -> Icons.Filled.BatteryFull
+                        level >= 50 -> Icons.Filled.Battery5Bar
+                        level >= 25 -> Icons.Filled.Battery3Bar
+                        else -> Icons.Filled.Battery1Bar
+                    },
+                    contentDescription = "Battery",
+                    modifier = Modifier.size(14.dp),
+                    tint = if (level <= 15) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    "$level %",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
         Spacer(Modifier.weight(1f))

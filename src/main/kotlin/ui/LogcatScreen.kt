@@ -17,13 +17,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.swing.Swing
+import kotlinx.coroutines.withContext
+import java.awt.FileDialog
+import java.awt.Frame
+import java.io.File
 
 private const val MAX_LINES = 3000
 private const val TRIM_BATCH = 500
+private const val PRIORITY_ORDER = "VDIWEF"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -32,6 +38,8 @@ fun LogcatScreen(device: AdbDevice) {
     val lines = remember { mutableStateListOf<String>() }
     val listState = rememberLazyListState()
     var filter by remember { mutableStateOf("") }
+    var minLevel by remember { mutableStateOf('V') }
+    var levelDropdownExpanded by remember { mutableStateOf(false) }
     var autoScroll by remember { mutableStateOf(true) }
     var isPaused by remember { mutableStateOf(false) }
     var runningApps by remember { mutableStateOf<List<RunningApp>>(emptyList()) }
@@ -62,9 +70,31 @@ fun LogcatScreen(device: AdbDevice) {
         }
     }
 
-    val filteredLines = remember(lines.toList(), filter) {
-        if (filter.isBlank()) lines.toList()
-        else lines.filter { it.contains(filter, ignoreCase = true) }
+    val filteredLines = remember(lines.toList(), filter, minLevel) {
+        val minIndex = PRIORITY_ORDER.indexOf(minLevel)
+        lines.filter { line ->
+            val levelOk = minIndex <= 0 || run {
+                val priority = logLinePriority(line)
+                priority == null || PRIORITY_ORDER.indexOf(priority) >= minIndex
+            }
+            levelOk && (filter.isBlank() || line.contains(filter, ignoreCase = true))
+        }
+    }
+
+    fun exportLogs() {
+        scope.launch {
+            val target = withContext(Dispatchers.Swing) {
+                val dialog = FileDialog(null as Frame?, "Export logs…", FileDialog.SAVE)
+                dialog.file = "logcat-${device.serial}.txt"
+                dialog.isVisible = true
+                val dir = dialog.directory
+                val name = dialog.file
+                if (dir != null && name != null) File(dir, name) else null
+            } ?: return@launch
+            runCatching {
+                withContext(Dispatchers.IO) { target.writeText(filteredLines.joinToString("\n")) }
+            }
+        }
     }
 
     LaunchedEffect(filteredLines.size, autoScroll) {
@@ -152,6 +182,43 @@ fun LogcatScreen(device: AdbDevice) {
                     } else null
                 )
 
+                // Min log level
+                Box {
+                    OutlinedButton(
+                        onClick = { levelDropdownExpanded = true },
+                        contentPadding = PaddingValues(horizontal = 10.dp),
+                    ) {
+                        Text(
+                            minLevel.toString(),
+                            fontFamily = AppMonoFamily,
+                            color = levelColor(minLevel),
+                        )
+                        Icon(Icons.Filled.ArrowDropDown, "Min level", modifier = Modifier.size(16.dp))
+                    }
+                    DropdownMenu(
+                        expanded = levelDropdownExpanded,
+                        onDismissRequest = { levelDropdownExpanded = false }
+                    ) {
+                        val labels = mapOf(
+                            'V' to "Verbose", 'D' to "Debug", 'I' to "Info",
+                            'W' to "Warning", 'E' to "Error", 'F' to "Fatal",
+                        )
+                        PRIORITY_ORDER.forEach { level ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        "$level  ${labels[level]}",
+                                        fontFamily = AppMonoFamily,
+                                        color = levelColor(level),
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                },
+                                onClick = { minLevel = level; levelDropdownExpanded = false }
+                            )
+                        }
+                    }
+                }
+
                 // Icon controls
                 if (isLoadingApps) {
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -172,6 +239,8 @@ fun LogcatScreen(device: AdbDevice) {
                     tint = if (autoScroll) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     onClick = { autoScroll = !autoScroll }
                 )
+
+                ToolbarIconButton(Icons.Filled.Download, "Export logs") { exportLogs() }
 
                 ToolbarIconButton(Icons.Filled.DeleteSweep, "Clear logs") {
                     lines.clear()
@@ -199,7 +268,7 @@ fun LogcatScreen(device: AdbDevice) {
             if (isPaused) {
                 Text(
                     "PAUSED",
-                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = AppMonoFamily),
                     color = MaterialTheme.colorScheme.secondary,
                 )
             }
@@ -227,7 +296,7 @@ fun LogcatScreen(device: AdbDevice) {
                             text = line,
                             color = logLineColor(line),
                             fontSize = 12.sp,
-                            fontFamily = FontFamily.Monospace,
+                            fontFamily = AppMonoFamily,
                             lineHeight = 17.sp,
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -250,15 +319,20 @@ private fun ToolbarIconButton(
     }
 }
 
-private fun logLineColor(line: String): Color {
+private fun logLinePriority(line: String): Char? {
     val match = Regex("""\s([EWIDVF])/""").find(line.take(50))
         ?: Regex("""\s([EWIDVF])\s""").find(line.take(50))
-    return when (match?.groupValues?.getOrNull(1)) {
-        "E" -> Color(0xFFFF7B72)
-        "W" -> Color(0xFFFFD93D)
-        "I" -> Color(0xFF56D364)
-        "D" -> Color(0xFF79B8FF)
-        "V" -> Color(0xFF6E7681)
-        else -> Color(0xFFCDD9E5)
-    }
+    return match?.groupValues?.getOrNull(1)?.firstOrNull()
 }
+
+private fun levelColor(level: Char): Color = when (level) {
+    'E', 'F' -> Color(0xFFFF7B72)
+    'W' -> Color(0xFFFFD93D)
+    'I' -> Color(0xFF56D364)
+    'D' -> Color(0xFF79B8FF)
+    'V' -> Color(0xFF6E7681)
+    else -> Color(0xFFCDD9E5)
+}
+
+private fun logLineColor(line: String): Color =
+    logLinePriority(line)?.let { levelColor(it) } ?: Color(0xFFCDD9E5)

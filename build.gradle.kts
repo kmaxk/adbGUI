@@ -48,8 +48,11 @@ compose.desktop {
                 bundleID = "de.adbgui"
                 minimumSystemVersion = "12.0"
                 dockName = "adbGUI"
-                // Provide src/main/resources/AppIcon.icns to enable:
-                // iconFile.set(project.file("src/main/resources/AppIcon.icns"))
+                iconFile.set(project.file("src/main/resources/AppIcon.icns"))
+            }
+
+            linux {
+                iconFile.set(project.file("src/main/resources/AppIcon.png"))
             }
         }
         buildTypes.release.proguard {
