@@ -39,7 +39,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Pkg, TargetFormat.Deb, TargetFormat.Rpm)
             packageName = "adbGUI"
-            packageVersion = "1.0.0"
+            packageVersion = "1.1.0"
             description = "ADB device manager for Android developers"
             copyright = "© 2026 adbGUI"
             vendor = "adbGUI"
