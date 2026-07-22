@@ -17,6 +17,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +40,8 @@ fun LogcatScreen(device: AdbDevice) {
     val lines = remember { mutableStateListOf<String>() }
     val listState = rememberLazyListState()
     var filter by remember { mutableStateOf("") }
+    var useRegex by remember { mutableStateOf(false) }
+    var highlightOnly by remember { mutableStateOf(false) }
     var minLevel by remember { mutableStateOf('V') }
     var levelDropdownExpanded by remember { mutableStateOf(false) }
     var autoScroll by remember { mutableStateOf(true) }
@@ -70,14 +74,26 @@ fun LogcatScreen(device: AdbDevice) {
         }
     }
 
-    val filteredLines = remember(lines.toList(), filter, minLevel) {
+    val compiledFilter = remember(filter, useRegex) {
+        if (useRegex && filter.isNotBlank()) runCatching { Regex(filter, RegexOption.IGNORE_CASE) }.getOrNull() else null
+    }
+    val filterIsInvalidRegex = useRegex && filter.isNotBlank() && compiledFilter == null
+
+    fun lineMatchesFilter(line: String): Boolean = when {
+        filter.isBlank() -> true
+        useRegex -> compiledFilter?.containsMatchIn(line) ?: true
+        else -> line.contains(filter, ignoreCase = true)
+    }
+
+    val filteredLines = remember(lines.toList(), filter, minLevel, useRegex, highlightOnly, compiledFilter) {
         val minIndex = PRIORITY_ORDER.indexOf(minLevel)
         lines.filter { line ->
             val levelOk = minIndex <= 0 || run {
                 val priority = logLinePriority(line)
                 priority == null || PRIORITY_ORDER.indexOf(priority) >= minIndex
             }
-            levelOk && (filter.isBlank() || line.contains(filter, ignoreCase = true))
+            val textOk = highlightOnly || lineMatchesFilter(line)
+            levelOk && textOk
         }
     }
 
@@ -161,13 +177,14 @@ fun LogcatScreen(device: AdbDevice) {
                     }
                 }
 
-                // Filter text
+                // Filter/search text
                 OutlinedTextField(
                     value = filter,
                     onValueChange = { filter = it },
-                    placeholder = { Text("Filter logs…", style = MaterialTheme.typography.bodySmall) },
+                    placeholder = { Text(if (highlightOnly) "Search logs…" else "Filter logs…", style = MaterialTheme.typography.bodySmall) },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
+                    isError = filterIsInvalidRegex,
                     textStyle = MaterialTheme.typography.bodySmall,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = MaterialTheme.colorScheme.primary,
@@ -180,6 +197,24 @@ fun LogcatScreen(device: AdbDevice) {
                             }
                         }
                     } else null
+                )
+
+                ToolbarIconButton(
+                    icon = Icons.Filled.Code,
+                    tooltip = if (filterIsInvalidRegex) "Invalid regex" else "Toggle regex filter",
+                    tint = when {
+                        filterIsInvalidRegex -> MaterialTheme.colorScheme.error
+                        useRegex -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    onClick = { useRegex = !useRegex }
+                )
+
+                ToolbarIconButton(
+                    icon = Icons.Filled.Search,
+                    tooltip = if (highlightOnly) "Highlighting matches (not filtering)" else "Highlight matches instead of filtering",
+                    tint = if (highlightOnly) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    onClick = { highlightOnly = !highlightOnly }
                 )
 
                 // Min log level
@@ -240,6 +275,16 @@ fun LogcatScreen(device: AdbDevice) {
                     onClick = { autoScroll = !autoScroll }
                 )
 
+                ToolbarIconButton(
+                    icon = Icons.Filled.KeyboardArrowDown,
+                    tooltip = "Jump to bottom",
+                    onClick = {
+                        scope.launch {
+                            if (filteredLines.isNotEmpty()) listState.scrollToItem(filteredLines.size - 1)
+                        }
+                    }
+                )
+
                 ToolbarIconButton(Icons.Filled.Download, "Export logs") { exportLogs() }
 
                 ToolbarIconButton(Icons.Filled.DeleteSweep, "Clear logs") {
@@ -293,7 +338,7 @@ fun LogcatScreen(device: AdbDevice) {
                 ) {
                     itemsIndexed(filteredLines) { _, line ->
                         Text(
-                            text = line,
+                            text = highlightedLine(line, filter, useRegex, compiledFilter),
                             color = logLineColor(line),
                             fontSize = 12.sp,
                             fontFamily = AppMonoFamily,
@@ -318,6 +363,28 @@ private fun ToolbarIconButton(
         Icon(icon, tooltip, modifier = Modifier.size(18.dp), tint = tint)
     }
 }
+
+private val HIGHLIGHT_STYLE = SpanStyle(background = Color(0xFF5C4A00), color = Color.White)
+
+private fun highlightedLine(line: String, filter: String, useRegex: Boolean, compiledFilter: Regex?) =
+    buildAnnotatedString {
+        append(line)
+        if (filter.isBlank()) return@buildAnnotatedString
+        val ranges = if (useRegex) {
+            compiledFilter?.findAll(line)?.map { it.range }?.toList() ?: emptyList()
+        } else {
+            buildList {
+                var idx = line.indexOf(filter, ignoreCase = true)
+                while (idx >= 0) {
+                    add(idx until idx + filter.length)
+                    idx = line.indexOf(filter, idx + filter.length, ignoreCase = true)
+                }
+            }
+        }
+        ranges.forEach { range ->
+            if (!range.isEmpty()) addStyle(HIGHLIGHT_STYLE, range.first, range.last + 1)
+        }
+    }
 
 private fun logLinePriority(line: String): Char? {
     val match = Regex("""\s([EWIDVF])/""").find(line.take(50))

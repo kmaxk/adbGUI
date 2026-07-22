@@ -2,6 +2,7 @@ package adb
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
@@ -91,6 +92,15 @@ object AdbService {
             }
             .filter { it.isOnline }
     }
+
+    private const val DEVICE_POLL_INTERVAL_MS = 1000L
+
+    fun deviceTrackFlow(): Flow<List<AdbDevice>> = flow {
+        while (currentCoroutineContext().isActive) {
+            emit(runCatching { devices() }.getOrDefault(emptyList()))
+            delay(DEVICE_POLL_INTERVAL_MS)
+        }
+    }.flowOn(Dispatchers.IO)
 
     suspend fun runningApps(serial: String): List<RunningApp> = withContext(Dispatchers.IO) {
         runCommand(listOf(adbPath, "-s", serial, "shell", "ps", "-A"))

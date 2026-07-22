@@ -38,7 +38,18 @@ fun App() {
         }
     }
 
-    LaunchedEffect(Unit) { refreshDevices() }
+    // Polls `adb devices` so plugging/unplugging a device or starting an emulator
+    // updates the device bar without a manual refresh.
+    LaunchedEffect(Unit) {
+        isLoadingDevices = true
+        AdbService.deviceTrackFlow().collect { list ->
+            devices = list
+            if (selectedDevice == null || selectedDevice !in devices) {
+                selectedDevice = devices.firstOrNull()
+            }
+            isLoadingDevices = false
+        }
+    }
 
     MaterialTheme(colorScheme = AppDarkColorScheme, shapes = AppShapes, typography = AppTypography) {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -53,7 +64,7 @@ fun App() {
                 )
 
                 Column(modifier = Modifier.weight(1f)) {
-                    if (selectedTab != 6) {
+                    if (selectedTab != 6 && selectedTab != 7) {
                         DeviceBar(
                             devices = devices,
                             selected = selectedDevice,
@@ -68,6 +79,7 @@ fun App() {
                     Crossfade(targetState = selectedTab, animationSpec = tween(180)) { tab ->
                         when (tab) {
                             6 -> SettingsScreen()
+                            7 -> HelpScreen()
                             else -> if (device == null) {
                                 NoDevicePlaceholder()
                             } else {
@@ -100,6 +112,7 @@ private fun AppNavigationRail(selectedTab: Int, onTabSelect: (Int) -> Unit) {
         NavItem("Shell", Icons.Filled.Terminal, 4),
         NavItem("Device", Icons.Filled.PhoneAndroid, 5),
         NavItem("Settings", Icons.Filled.Settings, 6),
+        NavItem("Help", Icons.Filled.HelpOutline, 7),
     )
 
     NavigationRail(
