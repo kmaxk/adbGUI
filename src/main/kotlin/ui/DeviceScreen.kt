@@ -159,11 +159,6 @@ fun DeviceScreen(device: AdbDevice) {
             onFeedback = { feedback = it },
         )
 
-        DeeplinkSection(
-            device = device,
-            onFeedback = { feedback = it },
-        )
-
         PropsSection(props = props)
 
         SectionCard("Reboot", Icons.Filled.RestartAlt) {
@@ -523,52 +518,6 @@ private fun DisplaySection(
     }
 }
 
-@Composable
-private fun DeeplinkSection(
-    device: AdbDevice,
-    onFeedback: (Pair<Boolean, String>) -> Unit,
-) {
-    val scope = rememberCoroutineScope()
-    var url by remember { mutableStateOf("") }
-    var isBusy by remember { mutableStateOf(false) }
-
-    SectionCard("Deeplink / URL", Icons.Filled.Link) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            OutlinedTextField(
-                value = url,
-                onValueChange = { url = it },
-                label = { Text("URL or deeplink") },
-                placeholder = { Text("https://example.com or myapp://path") },
-                modifier = Modifier.weight(1f),
-                singleLine = true,
-            )
-            Button(
-                enabled = !isBusy && url.isNotBlank(),
-                onClick = {
-                    scope.launch {
-                        isBusy = true
-                        val result = AdbService.openUrl(device.serial, url.trim())
-                        isBusy = false
-                        onFeedback(
-                            if (result.isSuccess) true to "Opened: ${url.trim()}"
-                            else false to "Failed: ${result.exceptionOrNull()?.message}"
-                        )
-                    }
-                }
-            ) {
-                Icon(Icons.Filled.OpenInNew, null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Open")
-            }
-            if (isBusy) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-        }
-    }
-}
-
 private const val MAX_PROP_RESULTS = 30
 
 @Composable
@@ -626,7 +575,7 @@ private fun PropsSection(props: Map<String, String>) {
 }
 
 @Composable
-private fun SectionCard(title: String, icon: ImageVector, content: @Composable ColumnScope.() -> Unit) {
+fun SectionCard(title: String, icon: ImageVector, content: @Composable ColumnScope.() -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         border = appCardBorder(),

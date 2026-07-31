@@ -64,7 +64,7 @@ fun App() {
                 )
 
                 Column(modifier = Modifier.weight(1f)) {
-                    if (selectedTab != 6 && selectedTab != 7) {
+                    if (selectedTab != 8 && selectedTab != 9) {
                         DeviceBar(
                             devices = devices,
                             selected = selectedDevice,
@@ -78,8 +78,8 @@ fun App() {
                     val device = selectedDevice
                     Crossfade(targetState = selectedTab, animationSpec = tween(180)) { tab ->
                         when (tab) {
-                            6 -> SettingsScreen()
-                            7 -> HelpScreen()
+                            8 -> SettingsScreen()
+                            9 -> HelpScreen()
                             else -> if (device == null) {
                                 NoDevicePlaceholder()
                             } else {
@@ -90,6 +90,8 @@ fun App() {
                                     3 -> CaptureScreen(device)
                                     4 -> ShellScreen(device)
                                     5 -> DeviceScreen(device)
+                                    6 -> DeeplinkScreen(device)
+                                    7 -> BatchScreen(device)
                                 }
                             }
                         }
@@ -111,8 +113,10 @@ private fun AppNavigationRail(selectedTab: Int, onTabSelect: (Int) -> Unit) {
         NavItem("Screen", Icons.Filled.Screenshot, 3),
         NavItem("Shell", Icons.Filled.Terminal, 4),
         NavItem("Device", Icons.Filled.PhoneAndroid, 5),
-        NavItem("Settings", Icons.Filled.Settings, 6),
-        NavItem("Help", Icons.Filled.HelpOutline, 7),
+        NavItem("Deeplink", Icons.Filled.Link, 6),
+        NavItem("Batch", Icons.Filled.PlaylistPlay, 7),
+        NavItem("Settings", Icons.Filled.Settings, 8),
+        NavItem("Help", Icons.Filled.HelpOutline, 9),
     )
 
     NavigationRail(

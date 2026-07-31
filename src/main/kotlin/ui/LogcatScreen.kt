@@ -4,6 +4,7 @@ import adb.AdbDevice
 import adb.AdbService
 import adb.RunningApp
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -27,6 +28,8 @@ import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
 import java.awt.FileDialog
 import java.awt.Frame
+import java.awt.Toolkit
+import java.awt.datatransfer.StringSelection
 import java.io.File
 
 private const val MAX_LINES = 3000
@@ -50,6 +53,7 @@ fun LogcatScreen(device: AdbDevice) {
     var selectedApp by remember { mutableStateOf<RunningApp?>(null) }
     var appDropdownExpanded by remember { mutableStateOf(false) }
     var isLoadingApps by remember { mutableStateOf(false) }
+    var showExceptions by remember { mutableStateOf(false) }
 
     fun refreshApps() {
         scope.launch {
@@ -96,6 +100,8 @@ fun LogcatScreen(device: AdbDevice) {
             levelOk && textOk
         }
     }
+
+    val exceptions = remember(filteredLines) { findExceptions(filteredLines) }
 
     fun exportLogs() {
         scope.launch {
@@ -285,6 +291,17 @@ fun LogcatScreen(device: AdbDevice) {
                     }
                 )
 
+                ToolbarIconButton(
+                    icon = Icons.Filled.BugReport,
+                    tooltip = if (exceptions.isEmpty()) "No exceptions" else "Browse exceptions (${exceptions.size})",
+                    tint = when {
+                        showExceptions -> MaterialTheme.colorScheme.primary
+                        exceptions.isNotEmpty() -> MaterialTheme.colorScheme.error
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    onClick = { showExceptions = !showExceptions }
+                )
+
                 ToolbarIconButton(Icons.Filled.Download, "Export logs") { exportLogs() }
 
                 ToolbarIconButton(Icons.Filled.DeleteSweep, "Clear logs") {
@@ -328,23 +345,154 @@ fun LogcatScreen(device: AdbDevice) {
 
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-        // Log output
-        Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFF0D1117)) {
-            SelectionContainer {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
-                    contentPadding = PaddingValues(vertical = 6.dp)
-                ) {
-                    itemsIndexed(filteredLines) { _, line ->
-                        Text(
-                            text = highlightedLine(line, filter, useRegex, compiledFilter),
-                            color = logLineColor(line),
-                            fontSize = 12.sp,
-                            fontFamily = AppMonoFamily,
-                            lineHeight = 17.sp,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+        Row(modifier = Modifier.fillMaxSize()) {
+            // Log output
+            Surface(modifier = Modifier.weight(1f).fillMaxHeight(), color = Color(0xFF0D1117)) {
+                SelectionContainer {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
+                        contentPadding = PaddingValues(vertical = 6.dp)
+                    ) {
+                        itemsIndexed(filteredLines) { _, line ->
+                            Text(
+                                text = highlightedLine(line, filter, useRegex, compiledFilter),
+                                color = logLineColor(line),
+                                fontSize = 12.sp,
+                                fontFamily = AppMonoFamily,
+                                lineHeight = 17.sp,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (showExceptions) {
+                VerticalDivider(color = MaterialTheme.colorScheme.outline)
+                ExceptionsPanel(
+                    exceptions = exceptions,
+                    onJumpTo = { index ->
+                        autoScroll = false
+                        scope.launch { listState.scrollToItem(index) }
+                    },
+                    modifier = Modifier.width(360.dp).fillMaxHeight(),
+                )
+            }
+        }
+    }
+}
+
+private data class LogException(val startIndex: Int, val text: String)
+
+private val EXCEPTION_HEADER_PATTERN = Regex("""(FATAL EXCEPTION|[\w.$]+(Exception|Error)\b)""")
+private val BRIEF_TAG_PATTERN = Regex("""\s([EWIDVF])/([^(]+)\(""")
+private val THREADTIME_TAG_PATTERN = Regex("""\s([EWIDVF])\s+([^:]+):""")
+
+private fun logLineTag(line: String): String? {
+    val head = line.take(50)
+    BRIEF_TAG_PATTERN.find(head)?.let { return it.groupValues[2].trim() }
+    THREADTIME_TAG_PATTERN.find(head)?.let { return it.groupValues[2].trim() }
+    return null
+}
+
+private fun findExceptions(lines: List<String>): List<LogException> {
+    val results = mutableListOf<LogException>()
+    var i = 0
+    while (i < lines.size) {
+        val line = lines[i]
+        val priority = logLinePriority(line)
+        val isHeader = (priority == 'E' || priority == 'F' || priority == 'W') &&
+            EXCEPTION_HEADER_PATTERN.containsMatchIn(line)
+        if (isHeader) {
+            val tag = logLineTag(line)
+            val start = i
+            val block = StringBuilder(line)
+            var j = i + 1
+            while (j < lines.size) {
+                val next = lines[j]
+                if (logLinePriority(next) != priority || logLineTag(next) != tag) break
+                block.append("\n").append(next)
+                j++
+            }
+            results.add(LogException(start, block.toString()))
+            i = j
+        } else {
+            i++
+        }
+    }
+    return results
+}
+
+private fun exceptionTitle(text: String): String {
+    val firstLine = text.lineSequence().first()
+    val match = Regex("""([\w.$]+(?:Exception|Error))(:.*)?$""").find(firstLine)
+    return match?.value?.take(120) ?: firstLine.take(120)
+}
+
+@Composable
+private fun ExceptionsPanel(
+    exceptions: List<LogException>,
+    onJumpTo: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(modifier = modifier, color = MaterialTheme.colorScheme.surface) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(Icons.Filled.BugReport, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
+                Text(
+                    "Exceptions (${exceptions.size})",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            if (exceptions.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        "No exceptions in current view",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    itemsIndexed(exceptions) { idx, entry ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onJumpTo(entry.startIndex) }
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            Row(
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    "#${idx + 1}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                IconButton(
+                                    modifier = Modifier.size(24.dp),
+                                    onClick = {
+                                        Toolkit.getDefaultToolkit().systemClipboard
+                                            .setContents(StringSelection(entry.text), null)
+                                    }
+                                ) { Icon(Icons.Filled.ContentCopy, "Copy", modifier = Modifier.size(14.dp)) }
+                            }
+                            Text(
+                                exceptionTitle(entry.text),
+                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = AppMonoFamily),
+                                color = Color(0xFFFF7B72),
+                            )
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     }
                 }
             }
