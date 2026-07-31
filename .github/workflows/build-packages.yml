@@ -39,8 +39,14 @@ jobs:
           - os: ubuntu-latest
             task: packageDeb
             format: deb
+          - os: windows-latest
+            task: packageMsi
+            format: msi
 
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - uses: actions/checkout@v4
@@ -79,4 +85,4 @@ jobs:
       - name: Attach to release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*.{dmg,deb}
+          files: artifacts/**/*.{dmg,deb,msi}

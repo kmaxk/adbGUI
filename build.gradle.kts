@@ -37,7 +37,7 @@ compose.desktop {
     application {
         mainClass = "MainKt"
         nativeDistributions {
-            targetFormats(TargetFormat.Dmg, TargetFormat.Pkg, TargetFormat.Deb, TargetFormat.Rpm)
+            targetFormats(TargetFormat.Dmg, TargetFormat.Pkg, TargetFormat.Deb, TargetFormat.Rpm, TargetFormat.Msi, TargetFormat.Exe)
             packageName = "adbGUI"
             packageVersion = "1.1.0"
             description = "ADB device manager for Android developers"
@@ -53,6 +53,12 @@ compose.desktop {
 
             linux {
                 iconFile.set(project.file("src/main/resources/AppIcon.png"))
+            }
+
+            windows {
+                iconFile.set(project.file("src/main/resources/AppIcon.ico"))
+                menuGroup = "adbGUI"
+                perUserInstall = true
             }
         }
         buildTypes.release.proguard {
