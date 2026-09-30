@@ -355,7 +355,7 @@ fun CaptureScreen(device: AdbDevice) {
 
         // Preview area
         Box(
-            modifier = Modifier.weight(1f).fillMaxHeight().background(Color(0xFF0D1117)).padding(16.dp),
+            modifier = Modifier.weight(1f).fillMaxHeight().background(Bench.Well).padding(16.dp),
             contentAlignment = Alignment.Center
         ) {
             val image = screenshotImage

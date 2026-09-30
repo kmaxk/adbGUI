@@ -11,7 +11,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
@@ -102,7 +101,7 @@ fun BatchScreen(device: AdbDevice) {
                 value = script,
                 onValueChange = { script = it },
                 modifier = Modifier.fillMaxWidth().height(180.dp),
-                textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = AppMonoFamily),
                 placeholder = {
                     Text("tap 540 1200\ntext myuser@example.com\ntap 540 1400\ntext mypassword\nkey KEYCODE_ENTER")
                 },
@@ -200,7 +199,7 @@ fun BatchScreen(device: AdbDevice) {
                             tint = if (r.success) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                         )
                         Column {
-                            Text(r.line, style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace))
+                            Text(r.line, style = MaterialTheme.typography.bodySmall.copy(fontFamily = AppMonoFamily))
                             Text(
                                 r.output,
                                 style = MaterialTheme.typography.labelSmall,

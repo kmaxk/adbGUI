@@ -347,7 +347,7 @@ fun LogcatScreen(device: AdbDevice) {
 
         Row(modifier = Modifier.fillMaxSize()) {
             // Log output
-            Surface(modifier = Modifier.weight(1f).fillMaxHeight(), color = Color(0xFF0D1117)) {
+            Surface(modifier = Modifier.weight(1f).fillMaxHeight(), color = Bench.Well) {
                 SelectionContainer {
                     LazyColumn(
                         state = listState,
@@ -489,7 +489,7 @@ private fun ExceptionsPanel(
                             Text(
                                 exceptionTitle(entry.text),
                                 style = MaterialTheme.typography.bodySmall.copy(fontFamily = AppMonoFamily),
-                                color = Color(0xFFFF7B72),
+                                color = LogLevelColors.Error,
                             )
                         }
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -512,7 +512,7 @@ private fun ToolbarIconButton(
     }
 }
 
-private val HIGHLIGHT_STYLE = SpanStyle(background = Color(0xFF5C4A00), color = Color.White)
+private val HIGHLIGHT_STYLE = SpanStyle(background = Color(0xFF6B4A0E), color = Bench.Chalk)
 
 private fun highlightedLine(line: String, filter: String, useRegex: Boolean, compiledFilter: Regex?) =
     buildAnnotatedString {
@@ -541,13 +541,14 @@ private fun logLinePriority(line: String): Char? {
 }
 
 private fun levelColor(level: Char): Color = when (level) {
-    'E', 'F' -> Color(0xFFFF7B72)
-    'W' -> Color(0xFFFFD93D)
-    'I' -> Color(0xFF56D364)
-    'D' -> Color(0xFF79B8FF)
-    'V' -> Color(0xFF6E7681)
-    else -> Color(0xFFCDD9E5)
+    'F' -> LogLevelColors.Fatal
+    'E' -> LogLevelColors.Error
+    'W' -> LogLevelColors.Warn
+    'I' -> LogLevelColors.Info
+    'D' -> LogLevelColors.Debug
+    'V' -> LogLevelColors.Verbose
+    else -> LogLevelColors.Default
 }
 
 private fun logLineColor(line: String): Color =
-    logLinePriority(line)?.let { levelColor(it) } ?: Color(0xFFCDD9E5)
+    logLinePriority(line)?.let { levelColor(it) } ?: LogLevelColors.Default

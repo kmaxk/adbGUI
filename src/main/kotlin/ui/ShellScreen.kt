@@ -15,7 +15,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -51,7 +50,7 @@ fun ShellScreen(device: AdbDevice) {
 
     Column(modifier = Modifier.fillMaxSize()) {
         // Output
-        Surface(modifier = Modifier.weight(1f).fillMaxWidth(), color = Color(0xFF0D1117)) {
+        Surface(modifier = Modifier.weight(1f).fillMaxWidth(), color = Bench.Well) {
             if (entries.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     EmptyState(
@@ -72,7 +71,7 @@ fun ShellScreen(device: AdbDevice) {
                             Column {
                                 Text(
                                     "$ ${entry.command}",
-                                    color = Color(0xFF56D364),
+                                    color = Bench.Signal,
                                     fontSize = 12.sp,
                                     fontFamily = AppMonoFamily,
                                     lineHeight = 17.sp,
@@ -80,7 +79,7 @@ fun ShellScreen(device: AdbDevice) {
                                 if (entry.output.isNotEmpty()) {
                                     Text(
                                         entry.output,
-                                        color = Color(0xFFCDD9E5),
+                                        color = Bench.Chalk,
                                         fontSize = 12.sp,
                                         fontFamily = AppMonoFamily,
                                         lineHeight = 17.sp,

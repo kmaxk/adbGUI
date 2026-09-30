@@ -23,7 +23,7 @@ fun main() {
         ) {
             if (System.getProperty("os.name").contains("Mac", ignoreCase = true)) {
                 window.rootPane.putClientProperty("apple.awt.transparentTitleBar", true)
-                window.background = java.awt.Color(0x0D, 0x11, 0x17)
+                window.background = java.awt.Color(0x1B, 0x1C, 0x20) // Bench.Graphite
             }
             App()
         }
