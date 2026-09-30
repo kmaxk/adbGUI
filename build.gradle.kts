@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "de.adbgui"
-version = "1.2.1"
+version = "1.3.0"
 
 repositories {
     mavenCentral()
@@ -40,7 +40,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Pkg, TargetFormat.Deb, TargetFormat.Rpm, TargetFormat.Msi, TargetFormat.Exe)
             packageName = "adbGUI"
-            packageVersion = "1.2.1"
+            packageVersion = "1.3.0"
             description = "ADB device manager for Android developers"
             copyright = "© 2026 adbGUI"
             vendor = "adbGUI"
