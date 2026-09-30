@@ -13,6 +13,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -79,7 +80,9 @@ object IosService {
             val outcome = root["info"]?.jsonObject?.get("outcome")?.jsonPrimitive?.content
             if (outcome != null && outcome != "success") {
                 val err = root["error"]?.jsonObject
-                val msg = err?.get("userInfo")?.jsonObject?.get("NSLocalizedDescription")?.jsonPrimitive?.content
+                // Plain string in some Xcode versions, {"string": "..."} in others
+                val desc = (err?.get("userInfo") as? JsonObject)?.get("NSLocalizedDescription")
+                val msg = ((desc as? JsonPrimitive) ?: ((desc as? JsonObject)?.get("string") as? JsonPrimitive))?.content
                     ?: res.stderr.trim().ifEmpty { "devicectl failed" }
                 throw Exception(msg)
             }
@@ -151,6 +154,8 @@ object IosService {
             val props = o["deviceProperties"]?.jsonObject
             val hw = o["hardwareProperties"]?.jsonObject
             if (hw?.get("platform")?.jsonPrimitive?.content != "iOS") return@mapNotNull null
+            // Booted simulators show up here too ("simulated"); simctl already lists them
+            if (hw["reality"]?.jsonPrimitive?.content != "physical") return@mapNotNull null
             IosDevice(
                 // devicectl accepts the hardware UDID for --device
                 udid = hw["udid"]?.jsonPrimitive?.content ?: o.str("identifier"),

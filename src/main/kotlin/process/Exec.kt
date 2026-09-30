@@ -34,7 +34,8 @@ object Exec {
         val errFile = File.createTempFile("adbgui-exec", ".err")
         try {
             val process = ProcessBuilder(args).redirectError(errFile).start()
-            process.outputStream.use { out -> stdin?.let { out.write(it.toByteArray()) } }
+            // A tool that exits early closes the pipe; its exit code and stderr tell the story, not the IOException
+            runCatching { process.outputStream.use { out -> stdin?.let { out.write(it.toByteArray()) } } }
             val stdout = process.inputStream.bufferedReader().readText()
             val exit = process.waitFor()
             return ExecResult(exit, stdout, errFile.readText())

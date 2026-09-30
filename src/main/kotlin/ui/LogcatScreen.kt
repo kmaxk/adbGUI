@@ -8,7 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -36,22 +36,12 @@ private const val MAX_LINES = 3000
 private const val TRIM_BATCH = 500
 private const val PRIORITY_ORDER = "VDIWEF"
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LogcatScreen(device: AdbDevice) {
     val scope = rememberCoroutineScope()
-    val lines = remember { mutableStateListOf<String>() }
-    val listState = rememberLazyListState()
-    var filter by remember { mutableStateOf("") }
-    var useRegex by remember { mutableStateOf(false) }
-    var highlightOnly by remember { mutableStateOf(false) }
-    var minLevel by remember { mutableStateOf('V') }
-    var levelDropdownExpanded by remember { mutableStateOf(false) }
-    var autoScroll by remember { mutableStateOf(true) }
-    var isPaused by remember { mutableStateOf(false) }
+    val log = rememberLogViewState()
     var runningApps by remember { mutableStateOf<List<RunningApp>>(emptyList()) }
     var selectedApp by remember { mutableStateOf<RunningApp?>(null) }
-    var appDropdownExpanded by remember { mutableStateOf(false) }
     var isLoadingApps by remember { mutableStateOf(false) }
     var showExceptions by remember { mutableStateOf(false) }
 
@@ -67,273 +57,53 @@ fun LogcatScreen(device: AdbDevice) {
     LaunchedEffect(device.serial) { refreshApps() }
 
     LaunchedEffect(device.serial, selectedApp?.pid) {
-        lines.clear()
+        log.clear()
         AdbService.logcatFlow(device.serial, selectedApp?.pid).collect { line ->
-            if (!isPaused) {
-                lines.add(line)
-                if (lines.size > MAX_LINES + TRIM_BATCH) {
-                    lines.removeRange(0, TRIM_BATCH)
-                }
-            }
+            log.append(line, logLinePriority(line))
         }
     }
 
-    val compiledFilter = remember(filter, useRegex) {
-        if (useRegex && filter.isNotBlank()) runCatching { Regex(filter, RegexOption.IGNORE_CASE) }.getOrNull() else null
-    }
-    val filterIsInvalidRegex = useRegex && filter.isNotBlank() && compiledFilter == null
-
-    fun lineMatchesFilter(line: String): Boolean = when {
-        filter.isBlank() -> true
-        useRegex -> compiledFilter?.containsMatchIn(line) ?: true
-        else -> line.contains(filter, ignoreCase = true)
-    }
-
-    val filteredLines = remember(lines.toList(), filter, minLevel, useRegex, highlightOnly, compiledFilter) {
-        val minIndex = PRIORITY_ORDER.indexOf(minLevel)
-        lines.filter { line ->
-            val levelOk = minIndex <= 0 || run {
-                val priority = logLinePriority(line)
-                priority == null || PRIORITY_ORDER.indexOf(priority) >= minIndex
-            }
-            val textOk = highlightOnly || lineMatchesFilter(line)
-            levelOk && textOk
-        }
-    }
-
-    val exceptions = remember(filteredLines) { findExceptions(filteredLines) }
-
-    fun exportLogs() {
-        scope.launch {
-            val target = withContext(Dispatchers.Swing) {
-                val dialog = FileDialog(null as Frame?, "Export logs…", FileDialog.SAVE)
-                dialog.file = "logcat-${device.serial}.txt"
-                dialog.isVisible = true
-                val dir = dialog.directory
-                val name = dialog.file
-                if (dir != null && name != null) File(dir, name) else null
-            } ?: return@launch
-            runCatching {
-                withContext(Dispatchers.IO) { target.writeText(filteredLines.joinToString("\n")) }
-            }
-        }
-    }
-
-    LaunchedEffect(filteredLines.size, autoScroll) {
-        if (autoScroll && filteredLines.isNotEmpty()) {
-            listState.scrollToItem(filteredLines.size - 1)
-        }
-    }
+    val exceptions = remember(log.filteredLines) { findExceptions(log.filteredLines.map { it.text }) }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // Single compact toolbar
-        Surface(
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 2.dp,
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // App picker
-                ExposedDropdownMenuBox(
-                    expanded = appDropdownExpanded,
-                    onExpandedChange = { appDropdownExpanded = it },
-                    modifier = Modifier.width(260.dp)
-                ) {
-                    OutlinedTextField(
-                        value = selectedApp?.packageName ?: "All apps",
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("App", style = MaterialTheme.typography.labelSmall) },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(appDropdownExpanded) },
-                        modifier = Modifier.menuAnchor().fillMaxWidth(),
-                        singleLine = true,
-                        textStyle = MaterialTheme.typography.bodySmall,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outline,
-                        )
-                    )
-                    ExposedDropdownMenu(
-                        expanded = appDropdownExpanded,
-                        onDismissRequest = { appDropdownExpanded = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("All apps") },
-                            onClick = { selectedApp = null; appDropdownExpanded = false },
-                            leadingIcon = { Icon(Icons.Filled.Apps, null, modifier = Modifier.size(16.dp)) }
-                        )
-                        HorizontalDivider()
-                        if (runningApps.isEmpty()) {
-                            DropdownMenuItem(
-                                text = { Text("No user apps running", color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                                onClick = {},
-                                enabled = false
-                            )
-                        } else {
-                            runningApps.forEach { app ->
-                                DropdownMenuItem(
-                                    text = { Text(app.packageName, style = MaterialTheme.typography.bodySmall) },
-                                    onClick = { selectedApp = app; appDropdownExpanded = false }
-                                )
-                            }
-                        }
-                    }
-                }
+        LogToolbar {
+            AppPicker(
+                selected = selectedApp,
+                apps = runningApps,
+                onSelect = { selectedApp = it },
+            )
 
-                // Filter/search text
-                OutlinedTextField(
-                    value = filter,
-                    onValueChange = { filter = it },
-                    placeholder = { Text(if (highlightOnly) "Search logs…" else "Filter logs…", style = MaterialTheme.typography.bodySmall) },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    isError = filterIsInvalidRegex,
-                    textStyle = MaterialTheme.typography.bodySmall,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
-                    ),
-                    trailingIcon = if (filter.isNotEmpty()) {
-                        {
-                            IconButton(onClick = { filter = "" }, modifier = Modifier.size(18.dp)) {
-                                Icon(Icons.Filled.Clear, "Clear", modifier = Modifier.size(14.dp))
-                            }
-                        }
-                    } else null
-                )
+            LogFilterControls(log)
 
-                ToolbarIconButton(
-                    icon = Icons.Filled.Code,
-                    tooltip = if (filterIsInvalidRegex) "Invalid regex" else "Toggle regex filter",
-                    tint = when {
-                        filterIsInvalidRegex -> MaterialTheme.colorScheme.error
-                        useRegex -> MaterialTheme.colorScheme.primary
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                    onClick = { useRegex = !useRegex }
-                )
+            // Icon controls
+            if (isLoadingApps) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            } else {
+                LogToolbarButton(Icons.Filled.Refresh, "Refresh app list") { refreshApps() }
+            }
 
-                ToolbarIconButton(
-                    icon = Icons.Filled.Search,
-                    tooltip = if (highlightOnly) "Highlighting matches (not filtering)" else "Highlight matches instead of filtering",
-                    tint = if (highlightOnly) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    onClick = { highlightOnly = !highlightOnly }
-                )
+            LogFollowControls(log)
 
-                // Min log level
-                Box {
-                    OutlinedButton(
-                        onClick = { levelDropdownExpanded = true },
-                        contentPadding = PaddingValues(horizontal = 10.dp),
-                    ) {
-                        Text(
-                            minLevel.toString(),
-                            fontFamily = AppMonoFamily,
-                            color = levelColor(minLevel),
-                        )
-                        Icon(Icons.Filled.ArrowDropDown, "Min level", modifier = Modifier.size(16.dp))
-                    }
-                    DropdownMenu(
-                        expanded = levelDropdownExpanded,
-                        onDismissRequest = { levelDropdownExpanded = false }
-                    ) {
-                        val labels = mapOf(
-                            'V' to "Verbose", 'D' to "Debug", 'I' to "Info",
-                            'W' to "Warning", 'E' to "Error", 'F' to "Fatal",
-                        )
-                        PRIORITY_ORDER.forEach { level ->
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        "$level  ${labels[level]}",
-                                        fontFamily = AppMonoFamily,
-                                        color = levelColor(level),
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
-                                },
-                                onClick = { minLevel = level; levelDropdownExpanded = false }
-                            )
-                        }
-                    }
-                }
+            LogToolbarButton(
+                icon = Icons.Filled.BugReport,
+                tooltip = if (exceptions.isEmpty()) "No exceptions" else "Browse exceptions (${exceptions.size})",
+                tint = when {
+                    showExceptions -> MaterialTheme.colorScheme.primary
+                    exceptions.isNotEmpty() -> MaterialTheme.colorScheme.error
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                onClick = { showExceptions = !showExceptions }
+            )
 
-                // Icon controls
-                if (isLoadingApps) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                } else {
-                    ToolbarIconButton(Icons.Filled.Refresh, "Refresh app list") { refreshApps() }
-                }
+            LogExportButton(log, "logcat-${device.serial}.txt")
 
-                ToolbarIconButton(
-                    icon = if (isPaused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
-                    tooltip = if (isPaused) "Resume" else "Pause",
-                    tint = if (isPaused) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface,
-                    onClick = { isPaused = !isPaused }
-                )
-
-                ToolbarIconButton(
-                    icon = Icons.Filled.VerticalAlignBottom,
-                    tooltip = "Auto-scroll",
-                    tint = if (autoScroll) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    onClick = { autoScroll = !autoScroll }
-                )
-
-                ToolbarIconButton(
-                    icon = Icons.Filled.KeyboardArrowDown,
-                    tooltip = "Jump to bottom",
-                    onClick = {
-                        scope.launch {
-                            if (filteredLines.isNotEmpty()) listState.scrollToItem(filteredLines.size - 1)
-                        }
-                    }
-                )
-
-                ToolbarIconButton(
-                    icon = Icons.Filled.BugReport,
-                    tooltip = if (exceptions.isEmpty()) "No exceptions" else "Browse exceptions (${exceptions.size})",
-                    tint = when {
-                        showExceptions -> MaterialTheme.colorScheme.primary
-                        exceptions.isNotEmpty() -> MaterialTheme.colorScheme.error
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                    onClick = { showExceptions = !showExceptions }
-                )
-
-                ToolbarIconButton(Icons.Filled.Download, "Export logs") { exportLogs() }
-
-                ToolbarIconButton(Icons.Filled.DeleteSweep, "Clear logs") {
-                    lines.clear()
-                    scope.launch { AdbService.clearLogcat(device.serial) }
-                }
+            LogToolbarButton(Icons.Filled.DeleteSweep, "Clear logs") {
+                log.clear()
+                scope.launch { AdbService.clearLogcat(device.serial) }
             }
         }
 
-        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-
-        // Status row
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surface)
-                .padding(horizontal = 12.dp, vertical = 3.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(
-                "${filteredLines.size} lines",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (isPaused) {
-                Text(
-                    "PAUSED",
-                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = AppMonoFamily),
-                    color = MaterialTheme.colorScheme.secondary,
-                )
-            }
+        LogStatusRow(log) {
             if (selectedApp != null) {
                 Text(
                     "● ${selectedApp!!.packageName}",
@@ -343,41 +113,337 @@ fun LogcatScreen(device: AdbDevice) {
             }
         }
 
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
         Row(modifier = Modifier.fillMaxSize()) {
-            // Log output
-            Surface(modifier = Modifier.weight(1f).fillMaxHeight(), color = Bench.Well) {
-                SelectionContainer {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
-                        contentPadding = PaddingValues(vertical = 6.dp)
-                    ) {
-                        itemsIndexed(filteredLines) { _, line ->
-                            Text(
-                                text = highlightedLine(line, filter, useRegex, compiledFilter),
-                                color = logLineColor(line),
-                                fontSize = 12.sp,
-                                fontFamily = AppMonoFamily,
-                                lineHeight = 17.sp,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-                    }
-                }
-            }
+            LogLines(log, modifier = Modifier.weight(1f).fillMaxHeight())
 
             if (showExceptions) {
                 VerticalDivider(color = MaterialTheme.colorScheme.outline)
                 ExceptionsPanel(
                     exceptions = exceptions,
                     onJumpTo = { index ->
-                        autoScroll = false
-                        scope.launch { listState.scrollToItem(index) }
+                        log.autoScroll = false
+                        scope.launch { log.listState.scrollToItem(index) }
                     },
                     modifier = Modifier.width(360.dp).fillMaxHeight(),
                 )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AppPicker(selected: RunningApp?, apps: List<RunningApp>, onSelect: (RunningApp?) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+        modifier = Modifier.width(260.dp)
+    ) {
+        OutlinedTextField(
+            value = selected?.packageName ?: "All apps",
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("App", style = MaterialTheme.typography.labelSmall) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+            modifier = Modifier.menuAnchor().fillMaxWidth(),
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodySmall,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+            )
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            DropdownMenuItem(
+                text = { Text("All apps") },
+                onClick = { onSelect(null); expanded = false },
+                leadingIcon = { Icon(Icons.Filled.Apps, null, modifier = Modifier.size(16.dp)) }
+            )
+            HorizontalDivider()
+            if (apps.isEmpty()) {
+                DropdownMenuItem(
+                    text = { Text("No user apps running", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                    onClick = {},
+                    enabled = false
+                )
+            } else {
+                apps.forEach { app ->
+                    DropdownMenuItem(
+                        text = { Text(app.packageName, style = MaterialTheme.typography.bodySmall) },
+                        onClick = { onSelect(app); expanded = false }
+                    )
+                }
+            }
+        }
+    }
+}
+
+// --- Shared log view (Android logcat and iOS logs) ---
+
+/** One log line plus its logcat-style level (V/D/I/W/E/F); null levels always pass the level filter. */
+data class LogLine(val text: String, val level: Char?)
+
+/** Lines, filter and follow state shared by the log view pieces below. */
+@Stable
+class LogViewState {
+    val lines = mutableStateListOf<LogLine>()
+    val listState = LazyListState()
+    var filter by mutableStateOf("")
+    var useRegex by mutableStateOf(false)
+    var highlightOnly by mutableStateOf(false)
+    var minLevel by mutableStateOf('V')
+    var autoScroll by mutableStateOf(true)
+    var isPaused by mutableStateOf(false)
+
+    val compiledFilter by derivedStateOf {
+        if (useRegex && filter.isNotBlank()) runCatching { Regex(filter, RegexOption.IGNORE_CASE) }.getOrNull() else null
+    }
+    val filterIsInvalidRegex by derivedStateOf { useRegex && filter.isNotBlank() && compiledFilter == null }
+
+    val filteredLines by derivedStateOf {
+        val minIndex = PRIORITY_ORDER.indexOf(minLevel)
+        lines.filter { line ->
+            val levelOk = minIndex <= 0 || line.level == null || PRIORITY_ORDER.indexOf(line.level) >= minIndex
+            val textOk = highlightOnly || matchesFilter(line.text)
+            levelOk && textOk
+        }
+    }
+
+    private fun matchesFilter(text: String): Boolean = when {
+        filter.isBlank() -> true
+        useRegex -> compiledFilter?.containsMatchIn(text) ?: true
+        else -> text.contains(filter, ignoreCase = true)
+    }
+
+    /** Adds a line unless paused, trimming the oldest lines in batches. */
+    fun append(text: String, level: Char?) {
+        if (isPaused) return
+        lines.add(LogLine(text, level))
+        if (lines.size > MAX_LINES + TRIM_BATCH) {
+            lines.removeRange(0, TRIM_BATCH)
+        }
+    }
+
+    fun clear() = lines.clear()
+}
+
+@Composable
+fun rememberLogViewState() = remember { LogViewState() }
+
+/** Single compact toolbar row above the log. */
+@Composable
+fun LogToolbar(content: @Composable RowScope.() -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 2.dp,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            content = content,
+        )
+    }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+}
+
+/** Filter field (fills remaining width), regex toggle, highlight-only toggle and min level. */
+@Composable
+fun RowScope.LogFilterControls(state: LogViewState) {
+    var levelDropdownExpanded by remember { mutableStateOf(false) }
+
+    // Filter/search text
+    OutlinedTextField(
+        value = state.filter,
+        onValueChange = { state.filter = it },
+        placeholder = { Text(if (state.highlightOnly) "Search logs…" else "Filter logs…", style = MaterialTheme.typography.bodySmall) },
+        modifier = Modifier.weight(1f),
+        singleLine = true,
+        isError = state.filterIsInvalidRegex,
+        textStyle = MaterialTheme.typography.bodySmall,
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = MaterialTheme.colorScheme.primary,
+            unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+        ),
+        trailingIcon = if (state.filter.isNotEmpty()) {
+            {
+                IconButton(onClick = { state.filter = "" }, modifier = Modifier.size(18.dp)) {
+                    Icon(Icons.Filled.Clear, "Clear", modifier = Modifier.size(14.dp))
+                }
+            }
+        } else null
+    )
+
+    LogToolbarButton(
+        icon = Icons.Filled.Code,
+        tooltip = if (state.filterIsInvalidRegex) "Invalid regex" else "Toggle regex filter",
+        tint = when {
+            state.filterIsInvalidRegex -> MaterialTheme.colorScheme.error
+            state.useRegex -> MaterialTheme.colorScheme.primary
+            else -> MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        onClick = { state.useRegex = !state.useRegex }
+    )
+
+    LogToolbarButton(
+        icon = Icons.Filled.Search,
+        tooltip = if (state.highlightOnly) "Highlighting matches (not filtering)" else "Highlight matches instead of filtering",
+        tint = if (state.highlightOnly) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        onClick = { state.highlightOnly = !state.highlightOnly }
+    )
+
+    // Min log level
+    Box {
+        OutlinedButton(
+            onClick = { levelDropdownExpanded = true },
+            contentPadding = PaddingValues(horizontal = 10.dp),
+        ) {
+            Text(
+                state.minLevel.toString(),
+                fontFamily = AppMonoFamily,
+                color = levelColor(state.minLevel),
+            )
+            Icon(Icons.Filled.ArrowDropDown, "Min level", modifier = Modifier.size(16.dp))
+        }
+        DropdownMenu(
+            expanded = levelDropdownExpanded,
+            onDismissRequest = { levelDropdownExpanded = false }
+        ) {
+            val labels = mapOf(
+                'V' to "Verbose", 'D' to "Debug", 'I' to "Info",
+                'W' to "Warning", 'E' to "Error", 'F' to "Fatal",
+            )
+            PRIORITY_ORDER.forEach { level ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            "$level  ${labels[level]}",
+                            fontFamily = AppMonoFamily,
+                            color = levelColor(level),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    },
+                    onClick = { state.minLevel = level; levelDropdownExpanded = false }
+                )
+            }
+        }
+    }
+}
+
+/** Pause/resume, auto-scroll toggle and jump to bottom. */
+@Composable
+fun LogFollowControls(state: LogViewState) {
+    val scope = rememberCoroutineScope()
+
+    LogToolbarButton(
+        icon = if (state.isPaused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+        tooltip = if (state.isPaused) "Resume" else "Pause",
+        tint = if (state.isPaused) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface,
+        onClick = { state.isPaused = !state.isPaused }
+    )
+
+    LogToolbarButton(
+        icon = Icons.Filled.VerticalAlignBottom,
+        tooltip = "Auto-scroll",
+        tint = if (state.autoScroll) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        onClick = { state.autoScroll = !state.autoScroll }
+    )
+
+    LogToolbarButton(
+        icon = Icons.Filled.KeyboardArrowDown,
+        tooltip = "Jump to bottom",
+        onClick = {
+            scope.launch {
+                val lines = state.filteredLines
+                if (lines.isNotEmpty()) state.listState.scrollToItem(lines.size - 1)
+            }
+        }
+    )
+}
+
+/** Saves the currently visible (filtered) lines to a text file. */
+@Composable
+fun LogExportButton(state: LogViewState, defaultFileName: String) {
+    val scope = rememberCoroutineScope()
+    LogToolbarButton(Icons.Filled.Download, "Export logs") {
+        scope.launch {
+            val target = withContext(Dispatchers.Swing) {
+                val dialog = FileDialog(null as Frame?, "Export logs…", FileDialog.SAVE)
+                dialog.file = defaultFileName
+                dialog.isVisible = true
+                val dir = dialog.directory
+                val name = dialog.file
+                if (dir != null && name != null) File(dir, name) else null
+            } ?: return@launch
+            val text = state.filteredLines.joinToString("\n") { it.text }
+            runCatching {
+                withContext(Dispatchers.IO) { target.writeText(text) }
+            }
+        }
+    }
+}
+
+/** Line count and paused marker, plus screen-specific [extra] items. */
+@Composable
+fun LogStatusRow(state: LogViewState, extra: @Composable RowScope.() -> Unit = {}) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(horizontal = 12.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(
+            "${state.filteredLines.size} lines",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (state.isPaused) {
+            Text(
+                "PAUSED",
+                style = MaterialTheme.typography.labelSmall.copy(fontFamily = AppMonoFamily),
+                color = MaterialTheme.colorScheme.secondary,
+            )
+        }
+        extra()
+    }
+
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+}
+
+/** The log output well: level-colored, selectable lines with filter highlights and auto-scroll. */
+@Composable
+fun LogLines(state: LogViewState, modifier: Modifier = Modifier) {
+    val filteredLines = state.filteredLines
+
+    LaunchedEffect(filteredLines.size, state.autoScroll) {
+        if (state.autoScroll && filteredLines.isNotEmpty()) {
+            state.listState.scrollToItem(filteredLines.size - 1)
+        }
+    }
+
+    Surface(modifier = modifier, color = Bench.Well) {
+        SelectionContainer {
+            LazyColumn(
+                state = state.listState,
+                modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
+                contentPadding = PaddingValues(vertical = 6.dp)
+            ) {
+                itemsIndexed(filteredLines) { _, line ->
+                    Text(
+                        text = highlightedLine(line.text, state.filter, state.useRegex, state.compiledFilter),
+                        color = line.level?.let { levelColor(it) } ?: LogLevelColors.Default,
+                        fontSize = 12.sp,
+                        fontFamily = AppMonoFamily,
+                        lineHeight = 17.sp,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         }
     }
@@ -500,8 +566,9 @@ private fun ExceptionsPanel(
     }
 }
 
+/** Compact icon button used in log toolbars. */
 @Composable
-private fun ToolbarIconButton(
+fun LogToolbarButton(
     icon: ImageVector,
     tooltip: String,
     tint: Color = LocalContentColor.current,
@@ -549,6 +616,3 @@ private fun levelColor(level: Char): Color = when (level) {
     'V' -> LogLevelColors.Verbose
     else -> LogLevelColors.Default
 }
-
-private fun logLineColor(line: String): Color =
-    logLinePriority(line)?.let { levelColor(it) } ?: LogLevelColors.Default

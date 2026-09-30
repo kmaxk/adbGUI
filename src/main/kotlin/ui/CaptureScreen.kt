@@ -69,9 +69,7 @@ fun CaptureScreen(device: AdbDevice) {
             AdbService.screenshot(device.serial).fold(
                 onSuccess = { bytes ->
                     screenshotBytes = bytes
-                    runCatching { SkiaImage.makeFromEncoded(bytes).toComposeImageBitmap() }
-                        .getOrNull()
-                        ?.let { screenshotImage = it }
+                    decodeImage(bytes)?.let { screenshotImage = it }
                 },
                 onFailure = {
                     feedback = false to "Live view stopped: ${it.message}"
@@ -89,9 +87,7 @@ fun CaptureScreen(device: AdbDevice) {
             result.fold(
                 onSuccess = { bytes ->
                     screenshotBytes = bytes
-                    screenshotImage = runCatching {
-                        SkiaImage.makeFromEncoded(bytes).toComposeImageBitmap()
-                    }.getOrNull()
+                    screenshotImage = decodeImage(bytes)
                     feedback = null
                 },
                 onFailure = { feedback = false to "Screenshot failed: ${it.message}" }
@@ -102,20 +98,7 @@ fun CaptureScreen(device: AdbDevice) {
 
     fun saveScreenshot() {
         val bytes = screenshotBytes ?: return
-        scope.launch {
-            val target = withContext(Dispatchers.Swing) {
-                val dialog = FileDialog(null as Frame?, "Save screenshot…", FileDialog.SAVE)
-                dialog.file = "screenshot-${device.serial}.png"
-                dialog.isVisible = true
-                val dir = dialog.directory
-                val name = dialog.file
-                if (dir != null && name != null) File(dir, name) else null
-            } ?: return@launch
-            runCatching { target.writeBytes(bytes) }.fold(
-                onSuccess = { feedback = true to "Saved: ${target.absolutePath}" },
-                onFailure = { feedback = false to "Save failed: ${it.message}" }
-            )
-        }
+        scope.launch { savePng(bytes, "screenshot-${device.serial}.png")?.let { feedback = it } }
     }
 
     fun toggleRecording() {
@@ -127,14 +110,8 @@ fun CaptureScreen(device: AdbDevice) {
                     onFailure = { feedback = false to "Recording failed: ${it.message}" }
                 )
             } else {
-                val target = withContext(Dispatchers.Swing) {
-                    val dialog = FileDialog(null as Frame?, "Save recording…", FileDialog.SAVE)
-                    dialog.file = "recording-${device.serial}.mp4"
-                    dialog.isVisible = true
-                    val dir = dialog.directory
-                    val name = dialog.file
-                    if (dir != null && name != null) File(dir, name).absolutePath else null
-                } ?: return@launch
+                val target = chooseSaveFile("Save recording…", "recording-${device.serial}.mp4")
+                    ?.absolutePath ?: return@launch
                 isStoppingRecording = true
                 val result = AdbService.stopRecording(device.serial, target)
                 isStoppingRecording = false
@@ -158,36 +135,9 @@ fun CaptureScreen(device: AdbDevice) {
         KeyAction("Delete", Icons.Filled.Backspace, 67),
     )
 
-    Row(modifier = Modifier.fillMaxSize()) {
-        // Controls column
-        Column(
-            modifier = Modifier
-                .width(360.dp)
-                .fillMaxHeight()
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text("Screen", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-
-            AnimatedFade(feedback) { (success, msg) ->
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (success) MaterialTheme.colorScheme.secondaryContainer
-                        else MaterialTheme.colorScheme.errorContainer
-                    ),
-                    border = appCardBorder(),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        msg,
-                        modifier = Modifier.padding(12.dp),
-                        color = if (success) MaterialTheme.colorScheme.onSecondaryContainer
-                        else MaterialTheme.colorScheme.onErrorContainer,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            }
+    CaptureLayout(
+        controls = {
+            CaptureFeedback(feedback)
 
             CaptureSection("Live View", Icons.Filled.PlayCircle) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -215,49 +165,20 @@ fun CaptureScreen(device: AdbDevice) {
                 )
             }
 
-            CaptureSection("Screenshot", Icons.Filled.Screenshot) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Button(enabled = !isCapturing && !liveView, onClick = { capture() }) {
-                        Icon(Icons.Filled.CameraAlt, null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Capture")
-                    }
-                    OutlinedButton(enabled = screenshotBytes != null, onClick = { saveScreenshot() }) {
-                        Icon(Icons.Filled.Save, null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Save PNG")
-                    }
-                    if (isCapturing) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                }
-            }
+            ScreenshotSection(
+                isCapturing = isCapturing,
+                captureEnabled = !liveView,
+                canSave = screenshotBytes != null,
+                onCapture = { capture() },
+                onSave = { saveScreenshot() },
+            )
 
-            CaptureSection("Screen Recording", Icons.Filled.Videocam) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Button(
-                        enabled = !isStoppingRecording,
-                        onClick = { toggleRecording() },
-                        colors = if (isRecording) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                        else ButtonDefaults.buttonColors()
-                    ) {
-                        Icon(
-                            if (isRecording) Icons.Filled.Stop else Icons.Filled.FiberManualRecord,
-                            null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (isRecording) "Stop & Save" else "Start Recording")
-                    }
-                    if (isStoppingRecording) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                    if (isRecording && !isStoppingRecording) {
-                        Text("● REC", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
-                    }
-                }
-                Text(
-                    "screenrecord stops automatically after 3 minutes",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            RecordingSection(
+                isRecording = isRecording,
+                isBusy = isStoppingRecording,
+                onToggle = { toggleRecording() },
+                hint = "screenrecord stops automatically after 3 minutes",
+            )
 
             CaptureSection("Mirror (scrcpy)", Icons.Filled.Cast) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -344,63 +265,49 @@ fun CaptureScreen(device: AdbDevice) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-        }
-
-        Box(
-            Modifier
-                .width(1.dp)
-                .fillMaxHeight()
-                .background(MaterialTheme.colorScheme.outline)
-        )
-
-        // Preview area
-        Box(
-            modifier = Modifier.weight(1f).fillMaxHeight().background(Bench.Well).padding(16.dp),
-            contentAlignment = Alignment.Center
-        ) {
+        },
+        preview = {
             val image = screenshotImage
-            if (image != null) {
-                Image(
-                    bitmap = image,
-                    contentDescription = "Screenshot",
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .onSizeChanged { previewSize = it }
-                        .pointerInput(liveView, image.width, image.height) {
-                            if (!liveView) return@pointerInput
-                            detectTapGestures { offset ->
-                                mapToDevice(offset, image, previewSize)?.let { (x, y) ->
-                                    scope.launch { AdbService.tap(device.serial, x, y) }
-                                }
+            CapturePreview(
+                image = image,
+                emptySubtitle = "Capture the device screen or start Live View",
+                imageModifier = if (image == null) Modifier else Modifier
+                    .onSizeChanged { previewSize = it }
+                    .pointerInput(liveView, image.width, image.height) {
+                        if (!liveView) return@pointerInput
+                        detectTapGestures { offset ->
+                            mapToDevice(offset, image, previewSize)?.let { (x, y) ->
+                                scope.launch { AdbService.tap(device.serial, x, y) }
                             }
                         }
-                        .pointerInput(liveView, image.width, image.height) {
-                            if (!liveView) return@pointerInput
-                            var start: Offset? = null
-                            var last = Offset.Zero
-                            var startTime = 0L
-                            detectDragGestures(
-                                onDragStart = {
-                                    start = it
-                                    last = it
-                                    startTime = System.currentTimeMillis()
-                                },
-                                onDrag = { change, _ -> last = change.position },
-                                onDragCancel = { start = null },
-                                onDragEnd = {
-                                    val s = start ?: return@detectDragGestures
-                                    start = null
-                                    val from = mapToDevice(s, image, previewSize) ?: return@detectDragGestures
-                                    val to = mapToDevice(last, image, previewSize) ?: return@detectDragGestures
-                                    val duration = (System.currentTimeMillis() - startTime)
-                                        .coerceIn(50, 2000).toInt()
-                                    scope.launch {
-                                        AdbService.swipe(device.serial, from.first, from.second, to.first, to.second, duration)
-                                    }
+                    }
+                    .pointerInput(liveView, image.width, image.height) {
+                        if (!liveView) return@pointerInput
+                        var start: Offset? = null
+                        var last = Offset.Zero
+                        var startTime = 0L
+                        detectDragGestures(
+                            onDragStart = {
+                                start = it
+                                last = it
+                                startTime = System.currentTimeMillis()
+                            },
+                            onDrag = { change, _ -> last = change.position },
+                            onDragCancel = { start = null },
+                            onDragEnd = {
+                                val s = start ?: return@detectDragGestures
+                                start = null
+                                val from = mapToDevice(s, image, previewSize) ?: return@detectDragGestures
+                                val to = mapToDevice(last, image, previewSize) ?: return@detectDragGestures
+                                val duration = (System.currentTimeMillis() - startTime)
+                                    .coerceIn(50, 2000).toInt()
+                                scope.launch {
+                                    AdbService.swipe(device.serial, from.first, from.second, to.first, to.second, duration)
                                 }
-                            )
-                        }
-                )
+                            }
+                        )
+                    },
+            ) {
                 if (liveView) {
                     Text(
                         "LIVE",
@@ -412,15 +319,9 @@ fun CaptureScreen(device: AdbDevice) {
                             .padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                 }
-            } else {
-                EmptyState(
-                    icon = Icons.Filled.Screenshot,
-                    title = "No screenshot yet",
-                    subtitle = "Capture the device screen or start Live View",
-                )
             }
-        }
-    }
+        },
+    )
 }
 
 /** Maps a pointer position on the letterboxed preview to device pixel coordinates. */
@@ -435,8 +336,172 @@ private fun mapToDevice(offset: Offset, image: ImageBitmap, box: IntSize): Pair<
     return x.roundToInt() to y.roundToInt()
 }
 
+// --- Shared with IosCaptureScreen ---
+
+/** Controls column on the left, screenshot preview well on the right. */
 @Composable
-private fun CaptureSection(title: String, icon: ImageVector, content: @Composable ColumnScope.() -> Unit) {
+fun CaptureLayout(controls: @Composable ColumnScope.() -> Unit, preview: @Composable () -> Unit) {
+    Row(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .width(360.dp)
+                .fillMaxHeight()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text("Screen", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            controls()
+        }
+
+        Box(
+            Modifier
+                .width(1.dp)
+                .fillMaxHeight()
+                .background(MaterialTheme.colorScheme.outline)
+        )
+
+        Box(
+            modifier = Modifier.weight(1f).fillMaxHeight().background(Bench.Well).padding(16.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            preview()
+        }
+    }
+}
+
+/** Success/error card at the top of the controls; `true` means success. */
+@Composable
+fun CaptureFeedback(feedback: Pair<Boolean, String>?) {
+    AnimatedFade(feedback) { (success, msg) ->
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = if (success) MaterialTheme.colorScheme.secondaryContainer
+                else MaterialTheme.colorScheme.errorContainer
+            ),
+            border = appCardBorder(),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                msg,
+                modifier = Modifier.padding(12.dp),
+                color = if (success) MaterialTheme.colorScheme.onSecondaryContainer
+                else MaterialTheme.colorScheme.onErrorContainer,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+@Composable
+fun ScreenshotSection(
+    isCapturing: Boolean,
+    captureEnabled: Boolean,
+    canSave: Boolean,
+    onCapture: () -> Unit,
+    onSave: () -> Unit,
+) {
+    CaptureSection("Screenshot", Icons.Filled.Screenshot) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(enabled = !isCapturing && captureEnabled, onClick = onCapture) {
+                Icon(Icons.Filled.CameraAlt, null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Capture")
+            }
+            OutlinedButton(enabled = canSave, onClick = onSave) {
+                Icon(Icons.Filled.Save, null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Save PNG")
+            }
+            if (isCapturing) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+        }
+    }
+}
+
+/** Start/stop button with REC badge; [isBusy] disables it while a start or stop is in flight. */
+@Composable
+fun RecordingSection(isRecording: Boolean, isBusy: Boolean, onToggle: () -> Unit, hint: String) {
+    CaptureSection("Screen Recording", Icons.Filled.Videocam) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(
+                enabled = !isBusy,
+                onClick = onToggle,
+                colors = if (isRecording) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                else ButtonDefaults.buttonColors()
+            ) {
+                Icon(
+                    if (isRecording) Icons.Filled.Stop else Icons.Filled.FiberManualRecord,
+                    null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(if (isRecording) "Stop & Save" else "Start Recording")
+            }
+            if (isBusy) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            if (isRecording && !isBusy) {
+                Text("● REC", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+            }
+        }
+        Text(
+            hint,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/** The last screenshot scaled to fit, or an empty state; [overlay] draws on top (e.g. a LIVE badge). */
+@Composable
+fun CapturePreview(
+    image: ImageBitmap?,
+    emptySubtitle: String,
+    imageModifier: Modifier = Modifier,
+    overlay: @Composable BoxScope.() -> Unit = {},
+) {
+    if (image != null) {
+        Box(Modifier.fillMaxSize()) {
+            Image(
+                bitmap = image,
+                contentDescription = "Screenshot",
+                modifier = Modifier.fillMaxSize().then(imageModifier)
+            )
+            overlay()
+        }
+    } else {
+        EmptyState(
+            icon = Icons.Filled.Screenshot,
+            title = "No screenshot yet",
+            subtitle = emptySubtitle,
+        )
+    }
+}
+
+fun decodeImage(bytes: ByteArray): ImageBitmap? =
+    runCatching { SkiaImage.makeFromEncoded(bytes).toComposeImageBitmap() }.getOrNull()
+
+/** Native save dialog; null when the user cancels. */
+suspend fun chooseSaveFile(title: String, fileName: String): File? = withContext(Dispatchers.Swing) {
+    val dialog = FileDialog(null as Frame?, title, FileDialog.SAVE)
+    dialog.file = fileName
+    dialog.isVisible = true
+    val dir = dialog.directory
+    val name = dialog.file
+    if (dir != null && name != null) File(dir, name) else null
+}
+
+/** Asks where to save [bytes] and writes them; returns the feedback to show, or null when cancelled. */
+suspend fun savePng(bytes: ByteArray, fileName: String): Pair<Boolean, String>? {
+    val target = chooseSaveFile("Save screenshot…", fileName) ?: return null
+    return withContext(Dispatchers.IO) {
+        runCatching { target.writeBytes(bytes) }.fold(
+            onSuccess = { true to "Saved: ${target.absolutePath}" },
+            onFailure = { false to "Save failed: ${it.message}" }
+        )
+    }
+}
+
+@Composable
+fun CaptureSection(title: String, icon: ImageVector, content: @Composable ColumnScope.() -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         border = appCardBorder(),

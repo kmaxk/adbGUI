@@ -73,16 +73,31 @@ private val HELP_SECTIONS = listOf(
         )
     ),
     HelpSection(
+        "iOS (macOS only)", Icons.Filled.PhoneIphone,
+        listOf(
+            "Simulators (xcrun simctl) and iPhones over USB or Wi-Fi (xcrun devicectl) appear in the device bar next to Android devices; needs Xcode",
+            "Shut-down simulators show a Boot button; Shell and Batch are Android-only and hidden for iOS",
+            "Logs: live system log with process/subsystem filter; iPhones need idevicesyslog (brew install libimobiledevice)",
+            "Apps: list user/system apps, launch, terminate, uninstall, install .app/.ipa, app info; simulators can show the data container in Finder",
+            "Deeplinks: open URLs on simulators and iPhones",
+            "Files: browse an app's data container, export and import files, delete (simulators)",
+            "Screen: screenshots and screen recording (.mov on simulators, .mp4 on iPhones), open Simulator.app",
+            "Device: info, reboot/shutdown/erase, dark/light appearance, status bar override (9:41), simulated location, pasteboard",
+            "Simulator only: push notifications with a JSON payload, privacy grant/revoke/reset, add photos and videos",
+        )
+    ),
+    HelpSection(
         "Settings", Icons.Filled.Settings,
         listOf(
             "Configure the path to the adb binary manually, or use auto-detection",
+            "Shows the Xcode developer directory and whether idevicesyslog was found",
         )
     ),
     HelpSection(
         "Device bar", Icons.Filled.PhoneAndroid,
         listOf(
-            "Connected devices/emulators are detected automatically — no manual refresh needed",
-            "Switch between multiple connected devices; battery level shown for the selected device",
+            "Connected devices, emulators and iOS simulators/iPhones are detected automatically — no manual refresh needed",
+            "Switch between multiple connected devices; battery level shown for the selected Android device",
         )
     ),
 )
