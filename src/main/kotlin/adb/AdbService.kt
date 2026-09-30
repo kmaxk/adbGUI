@@ -1,5 +1,7 @@
 package adb
 
+import device.Device
+import device.Platform
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -8,6 +10,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import process.Exec
 
 data class RunningApp(val pid: String, val packageName: String)
 
@@ -50,8 +53,12 @@ data class AppInfo(
     val dataDir: String,
 )
 
-data class AdbDevice(val serial: String, val state: String, val model: String? = null) {
+data class AdbDevice(val serial: String, val state: String, val model: String? = null) : Device {
     val isOnline get() = state == "device"
+    override val id get() = serial
+    override val name get() = model ?: serial
+    override val platform get() = Platform.Android
+    override val isReady get() = isOnline
     val displayName get() = if (model != null) "$model ($serial)" else serial
     override fun toString() = displayName
 }
@@ -594,17 +601,7 @@ object AdbService {
 
     private fun shellQuote(path: String) = "'" + path.replace("'", "'\\''") + "'"
 
-    private fun runCommandBytes(args: List<String>): ByteArray {
-        val process = ProcessBuilder(args).start()
-        val bytes = process.inputStream.readBytes()
-        process.waitFor()
-        return bytes
-    }
+    private fun runCommandBytes(args: List<String>): ByteArray = Exec.runBytes(args)
 
-    private fun runCommand(args: List<String>): String {
-        val process = ProcessBuilder(args).redirectErrorStream(true).start()
-        val output = process.inputStream.bufferedReader().readText()
-        process.waitFor()
-        return output
-    }
+    private fun runCommand(args: List<String>): String = Exec.run(args)
 }

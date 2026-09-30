@@ -1,7 +1,5 @@
 package ui
 
-import adb.AdbDevice
-import adb.AdbService
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -25,7 +23,7 @@ private fun deeplinkType(url: String): String {
 }
 
 @Composable
-fun DeeplinkScreen(device: AdbDevice) {
+fun DeeplinkScreen(openUrl: suspend (String) -> Result<String>) {
     var feedback by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
 
     Column(
@@ -65,14 +63,14 @@ fun DeeplinkScreen(device: AdbDevice) {
             }
         }
 
-        DeeplinkSection(device = device, onFeedback = { feedback = it })
+        DeeplinkSection(openUrl = openUrl, onFeedback = { feedback = it })
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DeeplinkSection(
-    device: AdbDevice,
+    openUrl: suspend (String) -> Result<String>,
     onFeedback: (Pair<Boolean, String>) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -88,10 +86,10 @@ private fun DeeplinkSection(
         filtered.groupBy { deeplinkType(it) }.toSortedMap()
     }
 
-    fun openUrl(target: String) {
+    fun open(target: String) {
         scope.launch {
             isBusy = true
-            val result = AdbService.openUrl(device.serial, target)
+            val result = openUrl(target)
             isBusy = false
             if (result.isSuccess) {
                 AppSettings.addDeeplink(target)
@@ -151,7 +149,7 @@ private fun DeeplinkSection(
             }
             Button(
                 enabled = !isBusy && url.isNotBlank(),
-                onClick = { expanded = false; openUrl(url.trim()) }
+                onClick = { expanded = false; open(url.trim()) }
             ) {
                 Icon(Icons.Filled.OpenInNew, null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
@@ -185,7 +183,7 @@ private fun DeeplinkSection(
                             IconButton(onClick = { url = entry }, modifier = Modifier.size(28.dp)) {
                                 Icon(Icons.Filled.Edit, "Fill", modifier = Modifier.size(14.dp))
                             }
-                            IconButton(enabled = !isBusy, onClick = { openUrl(entry) }, modifier = Modifier.size(28.dp)) {
+                            IconButton(enabled = !isBusy, onClick = { open(entry) }, modifier = Modifier.size(28.dp)) {
                                 Icon(Icons.Filled.OpenInNew, "Open", modifier = Modifier.size(14.dp))
                             }
                         }
