@@ -28,7 +28,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
@@ -166,14 +165,7 @@ private fun AppNavigationRail(selected: NavGroup, onSelect: (NavGroup) -> Unit) 
             .padding(vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(
-            "adb",
-            style = MaterialTheme.typography.titleMedium,
-            fontFamily = AppMonoFamily,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
-        )
+        AppLogo(size = 36.dp, modifier = Modifier.padding(top = 2.dp, bottom = 14.dp))
         DeviceGroups.forEach { group ->
             NavRailItem(group, selected = selected == group, onClick = { onSelect(group) })
         }
@@ -266,7 +258,9 @@ private fun SubTabStrip(screens: List<Screen>, selected: Screen, onSelect: (Scre
         screens.forEach { s ->
             val isSelected = s == selected
             Box(
+                // Intrinsic width keeps the fillMaxWidth underline from stretching the tab
                 modifier = Modifier
+                    .width(IntrinsicSize.Max)
                     .fillMaxHeight()
                     .selectable(selected = isSelected, role = Role.Tab, onClick = { onSelect(s) })
                     .padding(horizontal = 10.dp),
